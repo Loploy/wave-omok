@@ -347,6 +347,96 @@
     margin-top: 14px;
   }
 
+  .room {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed #c9c3b0;
+  }
+  .room-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .room-where {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .room-head button { font-size: 12px; padding: 5px 8px; }
+  .room-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .room-row input[type=text] {
+    flex: 1;
+    min-width: 0;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+  }
+  .room-row button { font-size: 12px; padding: 6px 9px; white-space: nowrap; }
+
+  #roomCodeInput {
+    flex: 0 0 76px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .room-list {
+    max-height: 120px;
+    overflow-y: auto;
+    margin-top: 8px;
+  }
+  .room-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 4px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid #ddd7c6;
+    background: #fffdf9;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .room-item:hover { border-color: var(--ink-soft); }
+  .room-item .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .room-item .code {
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--ink-soft);
+  }
+  .room-empty {
+    padding: 8px;
+    font-size: 12px;
+    color: #9a958a;
+  }
+  .room-msg {
+    min-height: 15px;
+    font-size: 12px;
+    color: var(--accent);
+  }
+
   .admin {
     margin-top: 14px;
     padding: 10px 12px;
@@ -384,15 +474,17 @@
       flex: 1;
       min-width: 0;
     }
-    .chat {
+    .side {
       flex: 0 0 340px;
-      margin-top: 0;
-      padding-top: 0;
-      border-top: none;
       position: sticky;
       top: 20px;
     }
-    .chat-log { height: 60vh; }
+    .chat {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+    }
+    .chat-log { height: 46vh; }
   }
 </style>
 </head>
@@ -454,6 +546,33 @@
   </div>
   </div>
 
+  <div class="side">
+  <div class="room" id="roomPanel" hidden>
+    <div class="room-head">
+      <span class="room-where" id="roomWhere">로비</span>
+      <button id="roomLeaveBtn" hidden>나가기</button>
+    </div>
+
+    <div id="roomBrowse">
+      <div class="room-row">
+        <input type="text" id="roomTitleInput" maxlength="20" placeholder="방 제목" />
+        <button id="roomCreateBtn" class="primary">방 만들기</button>
+      </div>
+      <div class="room-row">
+        <input type="text" id="roomCodeInput" maxlength="4" placeholder="코드" />
+        <button id="roomJoinBtn">참가</button>
+      </div>
+      <div class="room-list" id="roomList"></div>
+    </div>
+
+    <div class="room-row" id="roomInvite" hidden>
+      <input type="text" id="roomInviteLink" readonly />
+      <button id="roomCopyBtn">링크 복사</button>
+    </div>
+
+    <div class="room-msg" id="roomMsg"></div>
+  </div>
+
   <div class="chat">
     <div class="chat-title">
       <span>채팅</span>
@@ -476,6 +595,7 @@
       </div>
       <div class="admin-msg" id="adminMsg"></div>
     </div>
+  </div>
   </div>
 </div>
 
@@ -530,6 +650,19 @@
   const nickCancelBtn = document.getElementById('nickCancelBtn');
   const adminPanel = document.getElementById('adminPanel');
   const adminMsg = document.getElementById('adminMsg');
+  const roomPanel = document.getElementById('roomPanel');
+  const roomWhere = document.getElementById('roomWhere');
+  const roomLeaveBtn = document.getElementById('roomLeaveBtn');
+  const roomBrowse = document.getElementById('roomBrowse');
+  const roomTitleInput = document.getElementById('roomTitleInput');
+  const roomCreateBtn = document.getElementById('roomCreateBtn');
+  const roomCodeInput = document.getElementById('roomCodeInput');
+  const roomJoinBtn = document.getElementById('roomJoinBtn');
+  const roomListEl = document.getElementById('roomList');
+  const roomInvite = document.getElementById('roomInvite');
+  const roomInviteLink = document.getElementById('roomInviteLink');
+  const roomCopyBtn = document.getElementById('roomCopyBtn');
+  const roomMsg = document.getElementById('roomMsg');
   const boardScroll = document.getElementById('boardScroll');
   const zoomVal = document.getElementById('zoomVal');
 
@@ -1062,6 +1195,11 @@
     messagingSenderId: "24140803014",
     appId: "1:24140803014:web:6d09bd7b396ce7df01e0c7"
   };
+
+  const LOBBY_PATH = 'lobby';
+  const ROOMS_PATH = 'rooms';
+
+  const ROOM_LIST_PATH = 'roomList';
   const GAME_PATH = 'game';
   const CHAT_PATH = 'chat';
   const CHAT_LIMIT = 50;
@@ -1069,11 +1207,17 @@
   const NICK_KEY = 'wave-omok:nick';
   const USERS_PATH = 'users';
 
+  const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const CODE_LEN = 4;
+
   let online = false;
   let gameRef = null, gameHandler = null;
   let connRef = null, connHandler = null;
   let chatRef = null, chatQuery = null, chatHandler = null, chatRemoveHandler = null;
   let usersRef = null, usersHandler = null;
+  let roomListRef = null, roomListHandler = null;
+  let currentRoom = null;
+  let roomTitles = {};
   let nickMap = {};
   let applyingRemote = false;
   let lastSig = null;
@@ -1260,30 +1404,15 @@
     }
   }
 
-  function connectOnline() {
+  function placePath(sub) {
+    return (currentRoom ? ROOMS_PATH + '/' + currentRoom : LOBBY_PATH) + '/' + sub;
+  }
 
-    if (typeof firebase === 'undefined') {
-      setOnlineStatus('연결 불가 (오프라인?)');
-      onlineCheck.checked = false;
-      return;
-    }
+  function attachPlace() {
     const db = ensureDb();
-    if (!db) {
-      setOnlineStatus('연결 실패');
-      onlineCheck.checked = false;
-      return;
-    }
-    gameRef = db.ref(GAME_PATH);
-    connRef = db.ref('.info/connected');
+    if (!db) return;
 
-    online = true;
-    setOnlineStatus('연결 중…');
-
-    connHandler = connRef.on('value', snap => {
-      if (!online) return;
-      setOnlineStatus(snap.val() ? '연결됨' : '끊김 — 재접속 중…');
-    });
-
+    gameRef = db.ref(placePath(GAME_PATH));
     gameHandler = gameRef.on('value', snap => {
       const st = normalizeState(snap.val());
       if (!st) { pushState(); return; }
@@ -1296,7 +1425,7 @@
     clearChatLog();
     setChatEnabled(true);
 
-    usersRef = db.ref(USERS_PATH);
+    usersRef = db.ref(placePath(USERS_PATH));
     usersHandler = usersRef.on('value', snap => {
       const raw = snap.val() || {};
       const next = {};
@@ -1313,9 +1442,12 @@
         try { localStorage.setItem(NICK_KEY, myName); } catch (e) {  }
       }
     }, () => {  });
+
+    const meRef = usersRef.child(getMyId());
+    meRef.onDisconnect().remove();
     publishNick();
 
-    chatRef = db.ref(CHAT_PATH);
+    chatRef = db.ref(placePath(CHAT_PATH));
     chatQuery = chatRef.limitToLast(CHAT_LIMIT);
     chatHandler = chatQuery.on('child_added', snap => {
       const m = snap.val();
@@ -1333,24 +1465,210 @@
         lastChatFrom = null;
       }
     });
+
+    updateRoomUI();
+  }
+
+  function detachPlace() {
+    if (usersRef) {
+      const meRef = usersRef.child(getMyId());
+      meRef.onDisconnect().cancel();
+      meRef.remove().catch(() => {  });
+    }
+    if (gameRef && gameHandler) gameRef.off('value', gameHandler);
+    if (usersRef && usersHandler) usersRef.off('value', usersHandler);
+    if (chatQuery && chatHandler) chatQuery.off('child_added', chatHandler);
+    if (chatQuery && chatRemoveHandler) chatQuery.off('child_removed', chatRemoveHandler);
+    gameRef = gameHandler = null;
+    usersRef = usersHandler = null;
+    chatRef = chatQuery = chatHandler = chatRemoveHandler = null;
+    nickMap = {};
+    lastSig = null;
+    clearChatLog();
+  }
+
+  function connectOnline() {
+
+    if (typeof firebase === 'undefined') {
+      setOnlineStatus('연결 불가 (오프라인?)');
+      onlineCheck.checked = false;
+      return;
+    }
+    const db = ensureDb();
+    if (!db) {
+      setOnlineStatus('연결 실패');
+      onlineCheck.checked = false;
+      return;
+    }
+
+    online = true;
+    setOnlineStatus('연결 중…');
+    roomPanel.hidden = false;
+
+    connRef = db.ref('.info/connected');
+    connHandler = connRef.on('value', snap => {
+      if (!online) return;
+      setOnlineStatus(snap.val() ? '연결됨' : '끊김 — 재접속 중…');
+    });
+
+    roomListRef = db.ref(ROOM_LIST_PATH);
+    roomListHandler = roomListRef.on('value', snap => {
+      roomTitles = {};
+      const raw = snap.val() || {};
+      for (const code of Object.keys(raw)) {
+        const t = raw[code] && raw[code].title;
+        roomTitles[code] = (typeof t === 'string' && t.trim()) ? t.slice(0, 20) : '이름 없는 방';
+      }
+      renderRoomList();
+      updateRoomUI();
+    }, () => { roomMsg.textContent = '방 목록을 받지 못함'; });
+
+    currentRoom = null;
+    attachPlace();
+
+    const wanted = new URLSearchParams(location.search).get('room');
+    if (wanted) enterRoom(wanted);
   }
 
   function disconnectOnline() {
-    online = false;
-    if (gameRef && gameHandler) gameRef.off('value', gameHandler);
+    detachPlace();
     if (connRef && connHandler) connRef.off('value', connHandler);
-    if (chatQuery && chatHandler) chatQuery.off('child_added', chatHandler);
-    if (chatQuery && chatRemoveHandler) chatQuery.off('child_removed', chatRemoveHandler);
-    if (usersRef && usersHandler) usersRef.off('value', usersHandler);
-    gameRef = gameHandler = connRef = connHandler = null;
-    chatRef = chatQuery = chatHandler = chatRemoveHandler = null;
-    usersRef = usersHandler = null;
-    nickMap = {};
-    clearChatLog();
-    setChatEnabled(false);
-    lastSig = null;
+    if (roomListRef && roomListHandler) roomListRef.off('value', roomListHandler);
+    connRef = connHandler = null;
+    roomListRef = roomListHandler = null;
+    online = false;
+    currentRoom = null;
+    roomTitles = {};
+    roomPanel.hidden = true;
     setOnlineStatus('꺼짐');
+    setChatEnabled(false);
   }
+
+  function makeRoomCode() {
+    let out = '';
+    for (let i = 0; i < CODE_LEN; i++) {
+      out += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+    }
+    return out;
+  }
+
+  function inviteLink() {
+    return location.origin + location.pathname + '?room=' + currentRoom;
+  }
+
+  function updateRoomUI() {
+    const inRoom = !!currentRoom;
+    roomBrowse.hidden = inRoom;
+    roomInvite.hidden = !inRoom;
+    roomLeaveBtn.hidden = !inRoom;
+    if (inRoom) {
+      const title = roomTitles[currentRoom] || '이름 없는 방';
+      roomWhere.textContent = title + ' (' + currentRoom + ')';
+      roomInviteLink.value = inviteLink();
+    } else {
+      roomWhere.textContent = '로비';
+    }
+  }
+
+  function renderRoomList() {
+    roomListEl.textContent = '';
+    const codes = Object.keys(roomTitles).filter(c => c !== currentRoom);
+    if (codes.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'room-empty';
+      empty.textContent = '만들어진 방이 없음';
+      roomListEl.appendChild(empty);
+      return;
+    }
+    for (const code of codes) {
+      const btn = document.createElement('button');
+      btn.className = 'room-item';
+      btn.addEventListener('click', () => enterRoom(code));
+
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = roomTitles[code];
+
+      const codeEl = document.createElement('span');
+      codeEl.className = 'code';
+      codeEl.textContent = code;
+
+      btn.appendChild(name);
+      btn.appendChild(codeEl);
+      roomListEl.appendChild(btn);
+    }
+  }
+
+  function goPlace(code) {
+    if (currentRoom === code) return;
+    detachPlace();
+    currentRoom = code;
+    roomMsg.textContent = '';
+    attachPlace();
+    renderRoomList();
+  }
+
+  function enterRoom(code) {
+    code = (code || '').toUpperCase().trim();
+    if (code.length !== CODE_LEN) {
+      roomMsg.textContent = '코드는 ' + CODE_LEN + '글자임';
+      return;
+    }
+    const db = ensureDb();
+    if (!db) return;
+    db.ref(ROOM_LIST_PATH + '/' + code).once('value')
+      .then(snap => {
+        if (!snap.exists()) {
+          roomMsg.textContent = '없는 방임';
+          return;
+        }
+        roomCodeInput.value = '';
+        goPlace(code);
+      })
+      .catch(() => { roomMsg.textContent = '확인 실패'; });
+  }
+
+  function createRoom() {
+    const db = ensureDb();
+    if (!db) return;
+    const title = roomTitleInput.value.trim().slice(0, 20) || '이름 없는 방';
+
+    const tryOnce = (left) => {
+      if (left <= 0) { roomMsg.textContent = '방을 만들지 못함'; return; }
+      const code = makeRoomCode();
+      const ref = db.ref(ROOM_LIST_PATH + '/' + code);
+      ref.once('value').then(snap => {
+        if (snap.exists()) { tryOnce(left - 1); return; }
+        return ref.set({ title: title, created: Date.now() }).then(() => {
+          roomTitleInput.value = '';
+          goPlace(code);
+        });
+      }).catch(() => { roomMsg.textContent = '방을 만들지 못함'; });
+    };
+    tryOnce(5);
+  }
+
+  roomCreateBtn.addEventListener('click', createRoom);
+  roomJoinBtn.addEventListener('click', () => enterRoom(roomCodeInput.value));
+  roomCodeInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); enterRoom(roomCodeInput.value); }
+  });
+  roomTitleInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); createRoom(); }
+  });
+  roomLeaveBtn.addEventListener('click', () => goPlace(null));
+
+  roomCopyBtn.addEventListener('click', () => {
+    roomInviteLink.select();
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(roomInviteLink.value)
+        .then(() => { roomMsg.textContent = '링크 복사됨'; })
+        .catch(() => { roomMsg.textContent = '직접 복사해주세요'; });
+    } else {
+      roomMsg.textContent = '직접 복사해주세요';
+    }
+  });
 
   function openNickModal() {
     loadNick();
@@ -1403,12 +1721,12 @@
 
   document.getElementById('adminClearChatBtn').addEventListener('click', () => {
 
-    adminWipe(CHAT_PATH, '대화 초기화', clearChatLog);
+    adminWipe(placePath(CHAT_PATH), '대화 초기화', clearChatLog);
   });
 
   document.getElementById('adminClearGameBtn').addEventListener('click', () => {
 
-    adminWipe(GAME_PATH, '판 초기화', () => {
+    adminWipe(placePath(GAME_PATH), '판 초기화', () => {
       resetGame(true);
       saveSession();
     });
@@ -1416,7 +1734,7 @@
 
   document.getElementById('adminClearUsersBtn').addEventListener('click', () => {
 
-    adminWipe(USERS_PATH, '이름 목록 정리', () => {
+    adminWipe(placePath(USERS_PATH), '이름 목록 정리', () => {
       nickMap = {};
       refreshChatNames();
       publishNick();
