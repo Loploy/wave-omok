@@ -395,6 +395,24 @@
   }
   .room-row button { font-size: 12px; padding: 6px 9px; white-space: nowrap; }
 
+  .room-row label {
+    align-self: center;
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .room-row input[type=number] {
+    flex: 0 0 62px;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+  }
+
+  #roomMaxNew { flex: 0 0 54px; }
   #roomCodeInput {
     flex: 0 0 76px;
     text-transform: uppercase;
@@ -599,6 +617,7 @@
     <div id="roomBrowse">
       <div class="room-row">
         <input type="text" id="roomTitleInput" maxlength="20" placeholder="방 제목" />
+        <input type="number" id="roomMaxNew" min="2" max="20" value="8" title="최대 인원" />
         <button id="roomCreateBtn" class="primary">방 만들기</button>
       </div>
       <div class="room-row">
@@ -606,6 +625,11 @@
         <button id="roomJoinBtn">참가</button>
       </div>
       <div class="room-list" id="roomList"></div>
+    </div>
+
+    <div class="room-row" id="roomMaxRow" hidden>
+      <label for="roomMaxInput">최대 인원</label>
+      <input type="number" id="roomMaxInput" min="2" max="20" />
     </div>
 
     <div class="room-row" id="roomInvite" hidden>
@@ -706,6 +730,9 @@
   const roomLeaveBtn = document.getElementById('roomLeaveBtn');
   const roomBrowse = document.getElementById('roomBrowse');
   const roomTitleInput = document.getElementById('roomTitleInput');
+  const roomMaxNew = document.getElementById('roomMaxNew');
+  const roomMaxRow = document.getElementById('roomMaxRow');
+  const roomMaxInput = document.getElementById('roomMaxInput');
   const roomCreateBtn = document.getElementById('roomCreateBtn');
   const roomCodeInput = document.getElementById('roomCodeInput');
   const roomJoinBtn = document.getElementById('roomJoinBtn');
@@ -1266,6 +1293,8 @@
   const CODE_LEN = 4;
 
   const ROOM_GRACE_MS = 15000;
+  const ROOM_MAX_DEFAULT = 8;
+  const ROOM_MAX_LIMIT = 20;
   const MATCH_PATH = 'match';
   const COUNTDOWN_MS = 5000;
   const SEATS = 2;
@@ -1630,7 +1659,8 @@
         const r = raw[code] || {};
         rooms[code] = {
           title: (typeof r.title === 'string' && r.title.trim()) ? r.title.slice(0, 20) : '이름 없는 방',
-          created: typeof r.created === 'number' ? r.created : 0
+          created: typeof r.created === 'number' ? r.created : 0,
+          max: clampMax(r.max)
         };
       }
       syncRoomWatchers();
@@ -1711,6 +1741,12 @@
     db.ref(ROOMS_PATH + '/' + code).remove().catch(() => {  });
   }
 
+  function clampMax(v) {
+    const n = Math.floor(Number(v));
+    if (!Number.isFinite(n)) return ROOM_MAX_DEFAULT;
+    return Math.min(ROOM_MAX_LIMIT, Math.max(SEATS, n));
+  }
+
   function makeRoomCode() {
     let out = '';
     for (let i = 0; i < CODE_LEN; i++) {
@@ -1727,13 +1763,17 @@
     const inRoom = !!currentRoom;
     roomBrowse.hidden = inRoom;
     roomInvite.hidden = !inRoom;
+    roomMaxRow.hidden = !inRoom;
     roomLeaveBtn.hidden = !inRoom;
     if (inRoom) {
       const info = rooms[currentRoom];
       const title = info ? info.title : '이름 없는 방';
+      const max = info ? info.max : ROOM_MAX_DEFAULT;
 
       const count = Object.keys(nickMap).length;
-      roomWhere.textContent = title + ' (' + currentRoom + ') · ' + count + '명';
+      roomWhere.textContent = title + ' (' + currentRoom + ') · ' + count + '/' + max + '명';
+
+      if (document.activeElement !== roomMaxInput) roomMaxInput.value = max;
       roomInviteLink.value = inviteLink();
     } else {
       roomWhere.textContent = '로비';
@@ -1761,7 +1801,7 @@
 
       const countEl = document.createElement('span');
       countEl.className = 'count';
-      countEl.textContent = (roomCounts[code] || 0) + '명';
+      countEl.textContent = (roomCounts[code] || 0) + '/' + rooms[code].max + '명';
 
       const codeEl = document.createElement('span');
       codeEl.className = 'code';
@@ -1797,10 +1837,20 @@
       .then(snap => {
         if (!snap.exists()) {
           roomMsg.textContent = '없는 방임';
-          return;
+          return null;
         }
-        roomCodeInput.value = '';
-        goPlace(code);
+        const max = clampMax((snap.val() || {}).max);
+
+        return db.ref(ROOMS_PATH + '/' + code + '/' + USERS_PATH).once('value')
+          .then(us => {
+            const count = us.exists() ? Object.keys(us.val()).length : 0;
+            if (count >= max) {
+              roomMsg.textContent = '방이 꽉 참 (' + count + '/' + max + ')';
+              return;
+            }
+            roomCodeInput.value = '';
+            goPlace(code);
+          });
       })
       .catch(() => { roomMsg.textContent = '확인 실패'; });
   }
@@ -1809,6 +1859,8 @@
     const db = ensureDb();
     if (!db) return;
     const title = roomTitleInput.value.trim().slice(0, 20) || '이름 없는 방';
+    const max = clampMax(roomMaxNew.value);
+    roomMaxNew.value = max;
 
     const tryOnce = (left) => {
       if (left <= 0) { roomMsg.textContent = '방을 만들지 못함'; return; }
@@ -1816,7 +1868,7 @@
       const ref = db.ref(ROOM_LIST_PATH + '/' + code);
       ref.once('value').then(snap => {
         if (snap.exists()) { tryOnce(left - 1); return; }
-        return ref.set({ title: title, created: Date.now() }).then(() => {
+        return ref.set({ title: title, created: Date.now(), max: max }).then(() => {
           roomTitleInput.value = '';
           goPlace(code);
         });
@@ -1834,6 +1886,17 @@
     if (e.key === 'Enter') { e.preventDefault(); createRoom(); }
   });
   roomLeaveBtn.addEventListener('click', () => goPlace(null));
+
+  roomMaxInput.addEventListener('change', () => {
+    if (!currentRoom) return;
+    const max = clampMax(roomMaxInput.value);
+    roomMaxInput.value = max;
+    const db = ensureDb();
+    if (!db) return;
+    db.ref(ROOM_LIST_PATH + '/' + currentRoom + '/max').set(max)
+      .then(() => { roomMsg.textContent = '최대 인원 ' + max + '명으로 바꿈'; })
+      .catch(() => { roomMsg.textContent = '바꾸지 못함'; });
+  });
 
   roomCopyBtn.addEventListener('click', () => {
     roomInviteLink.select();
