@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wave Omok (beta)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!-- Firebase compat SDK (온라인 대전용)
+     modular(import) 대신 compat을 쓰는 이유: type="module"은 file:// 에서 CORS로 막혀서
+     "HTML 파일 더블클릭하면 바로 실행"이 깨짐. compat은 전역 firebase 객체를 만들어주므로 그대로 열림
+     로드 실패해도(오프라인 등) 온라인 기능만 안 되고 게임 자체는 정상 동작함 -->
+<script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-database-compat.js"></script>
+<style>
+  :root{
+    --paper: #f7f5ef;
+    --rule: #d7d9e6;
+    --ink: #2c3968;
+    --ink-soft: #5b699a;
+    --black-stone: #17181c;
+    --white-stone: #fbfbf8;
+    --accent: #b23b3b;
+    --text: #23252b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #e9e6de;
+    font-family: 'Noto Sans KR', sans-serif;
+    color: var(--text);
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 20px 16px 40px;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  h1 {
+    font-family: 'Nanum Pen Script', cursive;
+    font-size: 44px;
+    margin: 0;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .sub {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin: 4px 0 16px;
+  }
+  .board-frame {
+    position: relative;
+    background:
+      repeating-linear-gradient(
+        to bottom,
+        var(--paper) 0px, var(--paper) 27px,
+        var(--rule) 27px, var(--rule) 28px
+      );
+    border-radius: 4px;
+    box-shadow: 0 12px 30px rgba(30,25,10,0.18), 0 1px 0 rgba(255,255,255,0.6) inset;
+    padding: 10px;
+  }
+  .board-scroll {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    overflow: auto;
+    border-radius: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .hud {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .turn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .dot {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4) inset, 0 1px 1px rgba(0,0,0,0.2);
+  }
+  .dot.black { background: var(--black-stone); }
+  .dot.white { background: var(--white-stone); border: 1px solid #999; }
+  .msg {
+    font-size: 14px;
+    color: var(--accent);
+    font-weight: 700;
+    min-height: 18px;
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 9px 14px;
+    border-radius: 7px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:active { transform: translateY(1px); }
+  button.primary {
+    background: var(--ink);
+    color: white;
+    border-color: var(--ink);
+  }
+  .rule-note {
+    margin-top: 18px;
+    font-size: 12.5px;
+    color: #6b6558;
+    line-height: 1.6;
+    border-top: 1px dashed #c9c3b0;
+    padding-top: 12px;
+  }
+  .warp-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .warp-control label {
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .warp-control input[type=range] {
+    flex: 1;
+    accent-color: var(--ink);
+  }
+  .warp-control .val {
+    width: 44px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    font-weight: 700;
+  }
+  .zoom-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .zoom-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #fffdf9;
+    border: 1px solid #c9c3b0;
+    border-radius: 7px;
+    padding: 2px;
+  }
+  .zoom-group button {
+    border: none;
+    background: transparent;
+    padding: 6px 11px;
+    font-weight: 700;
+    border-radius: 5px;
+  }
+  .zoom-group button:hover { background: #efe9db; }
+  .zoom-group .zoomVal {
+    min-width: 44px;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--ink-soft);
+  }
+  .undo-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .save-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed #c9c3b0;
+    flex-wrap: wrap;
+  }
+  .save-row select {
+    flex: 1;
+    min-width: 140px;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+  }
+  .save-row select:disabled { color: #9a958a; }
+  /* ---- 채팅 (온라인 대전 켰을 때만 동작) ----
+     기본은 판 아래에 쌓임. 화면이 넓으면 판 옆 빈 공간으로 옮김 (맨 아래 미디어쿼리) */
+  .chat {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed #c9c3b0;
+  }
+  .chat-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+  .chat-title input[type=text] {
+    flex: 1;
+    min-width: 0;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 400;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+  }
+  .chat-title input[type=text]:disabled { background: #f0ede5; color: #9a958a; }
+  /* 이름과 말풍선을 세로로 묶음. 좌우 정렬은 이 래퍼가 맡고 말풍선은 모양만 담당 */
+  .chat-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 78%;
+  }
+  .chat-msg.mine { align-self: flex-end; align-items: flex-end; }
+  .chat-msg.theirs { align-self: flex-start; align-items: flex-start; }
+  .chat-name {
+    font-size: 11px;
+    color: #9a958a;
+    margin: 0 0 2px 4px;
+  }
+  .chat-log {
+    height: 150px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 7px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    font-size: 13px;
+  }
+  .chat-empty {
+    margin: auto;
+    color: #9a958a;
+    font-size: 12px;
+  }
+  .chat-line {
+    padding: 6px 10px;
+    border-radius: 12px;
+    line-height: 1.4;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .chat-line.mine { background: var(--ink); color: #fffdf9; }
+  .chat-line.theirs { background: #ece9df; color: var(--text); }
+  .chat-input-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .chat-input-row input[type=text] {
+    flex: 1;
+    min-width: 0;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+  }
+  .chat-input-row input[type=text]:disabled { background: #f0ede5; color: #9a958a; }
+  button.danger { color: var(--accent); }
+  button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  /* ---- 닉네임 입력 창 (온라인 참가할 때 한 번) ---- */
+  [hidden] { display: none !important; }
+  .modal-back {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(35,30,20,0.45);
+  }
+  .modal {
+    width: 100%;
+    max-width: 320px;
+    padding: 20px;
+    border-radius: 10px;
+    background: var(--paper);
+    box-shadow: 0 18px 40px rgba(30,25,10,0.35);
+  }
+  .modal-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+  .modal input[type=text] {
+    width: 100%;
+    font-family: inherit;
+    font-size: 14px;
+    padding: 9px 11px;
+    border-radius: 7px;
+    border: 1px solid #c9c3b0;
+    background: #fffdf9;
+    color: var(--text);
+  }
+  .modal-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  /* ---- 관리 패널 (?view=admin 일 때만 보임) ---- */
+  .admin {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--accent);
+    background: #fdf6f4;
+  }
+  .admin-title {
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .admin-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .admin-btns button { font-size: 12px; padding: 6px 9px; }
+  .admin-msg {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    min-height: 16px;
+  }
+
+  /* 넓은 화면에서는 판 양옆이 비므로 오른쪽 공간을 채팅에 씀.
+     1060px = 판 720 + 채팅 340. 이보다 좁으면 채팅이 눌리므로 그냥 아래로 내림 */
+  @media (min-width: 1060px) {
+    .wrap {
+      max-width: 1100px;
+      display: flex;
+      align-items: flex-start;
+      gap: 22px;
+    }
+    .main-col {
+      flex: 1;
+      min-width: 0;  /* 없으면 캔버스 때문에 컬럼이 안 줄어들어 채팅이 밀려남 */
+    }
+    .chat {
+      flex: 0 0 340px;
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+      position: sticky;  /* 판이 길어 스크롤해도 채팅은 화면에 남음 */
+      top: 20px;
+    }
+    .chat-log { height: 60vh; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="main-col">
+  <header>
+  </header>
+  <div class="turn">
+    <span class="dot" id="turnDot"></span>
+    <span id="turnText">흑 차례</span>
+  </div>
+
+  <div class="board-frame">
+    <div class="board-scroll" id="boardScroll">
+      <canvas id="board" width="800" height="800"></canvas>
+    </div>
+  </div>
+
+  <div class="zoom-row">
+    <div class="zoom-group">
+      <button id="zoomOutBtn" title="축소">−</button>
+      <span class="zoomVal" id="zoomVal">100%</span>
+      <button id="zoomInBtn" title="확대">+</button>
+    </div>
+    <button id="zoomResetBtn">원래 크기</button>
+    <button id="undoBtn" class="undo-btn">↩ 한 수 무르기</button>
+  </div>
+
+  <div class="warp-control">
+    <label for="warpSlider">삐뚤빼뚤 정도</label>
+    <input type="range" id="warpSlider" min="0" max="100" value="60" step="1" />
+    <span class="val" id="warpVal">60%</span>
+  </div>
+  <div class="warp-control">
+    <label for="allowTangleCheck">위치 꼬임 허용</label>
+    <input type="checkbox" id="allowTangleCheck" />
+  </div>
+
+  <div class="warp-control">
+    <label for="onlineCheck">온라인 대전</label>
+    <input type="checkbox" id="onlineCheck" />
+    <span class="val" id="onlineStatus">꺼짐</span>
+  </div>
+
+  <div class="hud">
+    <div class="msg" id="msg"></div>
+    <div class="btns">
+      <button id="resetBtn">다시 시작 (같은 판)</button>
+      <button id="reshuffleBtn" class="primary">새 판</button>
+    </div>
+  </div>
+
+  <div class="save-row">
+    <button id="saveBoardBtn">＋ 이 판 저장</button>
+    <select id="savedList" aria-label="저장한 판 목록"></select>
+    <button id="loadBoardBtn">불러오기</button>
+    <button id="deleteBoardBtn" class="danger">삭제</button>
+  </div>
+  </div><!-- /main-col -->
+
+  <div class="chat">
+    <div class="chat-title">
+      <span>채팅</span>
+      <input type="text" id="nickInput" maxlength="12" placeholder="닉네임" disabled />
+    </div>
+    <div class="chat-log" id="chatLog">
+      <div class="chat-empty" id="chatEmpty">온라인 대전을 켜면 대화할 수 있음</div>
+    </div>
+    <div class="chat-input-row">
+      <input type="text" id="chatInput" maxlength="200" placeholder="메시지 입력" disabled />
+      <button id="chatSendBtn" disabled>보내기</button>
+    </div>
+
+    <div class="admin" id="adminPanel" hidden>
+      <div class="admin-title">관리</div>
+      <div class="admin-btns">
+        <button id="adminClearChatBtn" class="danger">대화 초기화</button>
+        <button id="adminClearGameBtn" class="danger">판 초기화</button>
+        <button id="adminClearUsersBtn" class="danger">이름 목록 정리</button>
+      </div>
+      <div class="admin-msg" id="adminMsg"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-back" id="nickModal" hidden>
+  <div class="modal">
+    <div class="modal-title">닉네임 입력</div>
+    <input type="text" id="nickModalInput" maxlength="12" placeholder="닉네임" />
+    <div class="modal-btns">
+      <button id="nickCancelBtn">취소</button>
+      <button id="nickOkBtn" class="primary">참가</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const N = 15; // 논리적 격자 크기 (오목판과 동일)
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const SIZE = 800;
+  const MARGIN = 46;
+  const SPACING = (SIZE - MARGIN * 2) / (N - 1);
+  const HIT_R = SPACING * 0.42;
+
+  let grid = [];        // grid[i][j] = {x,y}
+  let board = [];        // board[i][j] = 0 empty, 1 black, 2 white
+  let turn = 1;
+  let gameOver = false;
+  let lastMove = null;
+  let winLine = null;
+  let seed = Date.now() % 100000;
+  let intensity = 0.6; // 0 = 정상 직선 격자, 1 = 기본 최대치(슬라이더 100%)
+  let moveHistory = []; // {i, j, player} 순서대로 쌓임 → 무르기용
+  let zoom = 1;
+
+  const turnDot = document.getElementById('turnDot');
+  const turnText = document.getElementById('turnText');
+  const msg = document.getElementById('msg');
+  const warpSlider = document.getElementById('warpSlider');
+  const warpVal = document.getElementById('warpVal');
+  const allowTangleCheck = document.getElementById('allowTangleCheck');
+  const onlineCheck = document.getElementById('onlineCheck');
+  const onlineStatus = document.getElementById('onlineStatus');
+  const chatLog = document.getElementById('chatLog');
+  const chatEmpty = document.getElementById('chatEmpty');
+  const chatInput = document.getElementById('chatInput');
+  const chatSendBtn = document.getElementById('chatSendBtn');
+  const nickInput = document.getElementById('nickInput');
+  const nickModal = document.getElementById('nickModal');
+  const nickModalInput = document.getElementById('nickModalInput');
+  const nickOkBtn = document.getElementById('nickOkBtn');
+  const nickCancelBtn = document.getElementById('nickCancelBtn');
+  const adminPanel = document.getElementById('adminPanel');
+  const adminMsg = document.getElementById('adminMsg');
+  const boardScroll = document.getElementById('boardScroll');
+  const zoomVal = document.getElementById('zoomVal');
+
+  // ---- seeded random ----
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // 시드는 파형의 "모양"(위상)만 결정하고, intensity는 그 진폭을 0~1로 스케일함.
+  // intensity=0이면 변위가 전부 0이 되어 완전한 직선 격자(정상 오목판)가 됨.
+  //
+  // 판 모양 계산은 항상 같은 식(buildWarpedGrid)으로 하고, "위치 꼬임 허용" 체크박스에 따라
+  // 꼬이는 지점만 국소적으로 눌러주는 보정(repairTangles)을 한 번 더 돌릴지가 갈림.
+  //  - 허용 OFF(기본): 꼬이는 지점 주변 노드만 세기를 낮춰서 선 교차를 없앰. 나머지는 원래 세기 그대로
+  //  - 허용 ON: 보정 없이 그대로 → 선이 서로 넘나들며 뒤엉킴
+  function generateGrid(newSeed, newIntensity) {
+    seed = newSeed;
+    if (newIntensity !== undefined) intensity = newIntensity;
+    grid = allowTangleCheck.checked ? buildWarpedGrid(null) : repairTangles();
+  }
+
+  // 행마다·열마다 독립된 위상을 줘서 판을 흔듦.
+  // damp[i][j]는 그 노드의 흔들림을 얼마나 줄일지 (1 = 원래대로, 0 = 흔들지 않음).
+  // 노드의 인덱스 순서는 안 뒤집히지만, 행마다 위상이 달라서 같은 화면 높이에서 비교하면
+  // 세로줄끼리 좌우가 뒤바뀔 수 있음 → 이때 선이 실제로 교차함.
+  function buildWarpedGrid(damp) {
+    const rnd = mulberry32(seed);
+    const rowPhaseA = [], rowPhaseB = [], colPhaseA = [], colPhaseB = [];
+    for (let i = 0; i < N; i++) {
+      rowPhaseA.push(rnd() * Math.PI * 2);
+      rowPhaseB.push(rnd() * Math.PI * 2);
+    }
+    for (let j = 0; j < N; j++) {
+      colPhaseA.push(rnd() * Math.PI * 2);
+      colPhaseB.push(rnd() * Math.PI * 2);
+    }
+    // 최대치(100%)에서 진폭 합이 SPACING의 ~88%까지 감
+    const amp1 = SPACING * 0.62 * intensity;
+    const amp2 = SPACING * 0.26 * intensity;
+    const f1 = 0.55, f2 = 1.25;
+
+    const g = [];
+    for (let i = 0; i < N; i++) {
+      const row = [];
+      for (let j = 0; j < N; j++) {
+        const s = damp ? damp[i][j] : 1;
+        const dx = (amp1 * Math.sin(j * f1 + rowPhaseA[i]) + amp2 * Math.sin(j * f2 + rowPhaseB[i] + 1.7)) * s;
+        const dy = (amp1 * Math.sin(i * f1 + colPhaseA[j]) + amp2 * Math.sin(i * f2 + colPhaseB[j] + 1.7)) * s;
+        row.push({
+          x: MARGIN + j * SPACING + dx,
+          y: MARGIN + i * SPACING + dy
+        });
+      }
+      g.push(row);
+    }
+    return g;
+  }
+
+  // ---- 위치 꼬임(선 교차) 탐지와 국소 보정 ----
+  //
+  // 주의: "노드의 인덱스 순서"와 "선 교차"는 별개의 문제임.
+  // 사인파 진폭이 SPACING보다 작아서 같은 행 안의 x좌표 순서는 애초에 뒤집히지 않는데도 선은 교차함.
+  // 행마다 위상이 달라서, 같은 행 인덱스끼리가 아니라 **같은 화면 높이**에서 비교하면 좌우가 뒤바뀌기 때문.
+  // 그래서 노드 좌표끼리 비교하지 않고, 실제로 그려지는 곡선을 같은 높이에서 샘플링해 비교함.
+  const TANGLE_MIN_GAP = SPACING * 0.16; // 인접한 두 선이 이보다 가까워지면 꼬임으로 판정
+  const DAMP_STEP = 0.93;                // 꼬인 지점 주변 노드의 흔들림을 한 번에 얼마나 줄일지
+  const MAX_REPAIR_ITER = 40;
+
+  // 곡선을 그리는 식(Catmull-Rom → Bezier)과 동일하게 샘플링함.
+  // k는 "몇 번째 노드 부근인지"를 실수로 담아서, 꼬인 지점을 다시 노드로 되짚을 때 씀
+  function sampleCurve(pts, steps) {
+    const out = [];
+    for (let n = 0; n < pts.length - 1; n++) {
+      const p0 = pts[n - 1] || pts[n];
+      const p1 = pts[n];
+      const p2 = pts[n + 1];
+      const p3 = pts[n + 2] || p2;
+      const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps, u = 1 - t;
+        out.push({
+          x: u*u*u*p1.x + 3*u*u*t*c1x + 3*u*t*t*c2x + t*t*t*p2.x,
+          y: u*u*u*p1.y + 3*u*u*t*c1y + 3*u*t*t*c2y + t*t*t*p2.y,
+          k: n + t
+        });
+      }
+    }
+    const last = pts[pts.length - 1];
+    out.push({ x: last.x, y: last.y, k: pts.length - 1 });
+    return out;
+  }
+
+  // 세로줄은 y가, 가로줄은 x가 단조증가하므로 "같은 높이/같은 가로위치"에서의 값을 보간해 얻을 수 있음
+  function valueAt(poly, t, axis) {
+    const A = axis === 'y' ? 'y' : 'x';
+    const B = axis === 'y' ? 'x' : 'y';
+    if (t <= poly[0][A]) return { v: poly[0][B], k: poly[0].k };
+    for (let n = 1; n < poly.length; n++) {
+      if (poly[n][A] >= t) {
+        const p = poly[n - 1], q = poly[n];
+        const d = q[A] - p[A];
+        const r = d === 0 ? 0 : (t - p[A]) / d;
+        return { v: p[B] + (q[B] - p[B]) * r, k: p.k + (q.k - p.k) * r };
+      }
+    }
+    const l = poly[poly.length - 1];
+    return { v: l[B], k: l.k };
+  }
+
+  // 인접한 줄끼리 너무 가까워지거나 순서가 뒤집히는 지점을 찾아 그 부근 노드를 돌려줌
+  function findTangles(g) {
+    const hits = [];
+    const cols = [], rows = [];
+    for (let j = 0; j < N; j++) {
+      const p = []; for (let i = 0; i < N; i++) p.push(g[i][j]);
+      cols.push(sampleCurve(p, 12));
+    }
+    for (let i = 0; i < N; i++) {
+      const p = []; for (let j = 0; j < N; j++) p.push(g[i][j]);
+      rows.push(sampleCurve(p, 12));
+    }
+    const STEPS = 60;
+    const clamp = (v) => Math.max(0, Math.min(N - 1, v));
+
+    for (let j = 0; j < N - 1; j++) {
+      const a = cols[j], b = cols[j + 1];
+      const lo = Math.max(a[0].y, b[0].y);
+      const hi = Math.min(a[a.length - 1].y, b[b.length - 1].y);
+      for (let s = 0; s <= STEPS; s++) {
+        const Y = lo + (hi - lo) * s / STEPS;
+        const va = valueAt(a, Y, 'y'), vb = valueAt(b, Y, 'y');
+        if (vb.v - va.v < TANGLE_MIN_GAP) {
+          const i = clamp(Math.round((va.k + vb.k) / 2));
+          hits.push({ dir: 'v', i, j });
+        }
+      }
+    }
+    for (let i = 0; i < N - 1; i++) {
+      const a = rows[i], b = rows[i + 1];
+      const lo = Math.max(a[0].x, b[0].x);
+      const hi = Math.min(a[a.length - 1].x, b[b.length - 1].x);
+      for (let s = 0; s <= STEPS; s++) {
+        const X = lo + (hi - lo) * s / STEPS;
+        const va = valueAt(a, X, 'x'), vb = valueAt(b, X, 'x');
+        if (vb.v - va.v < TANGLE_MIN_GAP) {
+          const j = clamp(Math.round((va.k + vb.k) / 2));
+          hits.push({ dir: 'h', i, j });
+        }
+      }
+    }
+    return hits;
+  }
+
+  // 꼬이는 지점 주변 노드만 반복해서 눌러줌.
+  // 세기를 전체적으로 낮추는 게 아니라, 문제가 생기는 자리만 국소적으로 펴는 것이라
+  // 판의 나머지 부분은 원래 삐뚤빼뚤함을 그대로 유지함 (보통 노드의 85~95%가 원래 세기 그대로).
+  function repairTangles() {
+    const damp = Array.from({ length: N }, () => Array(N).fill(1));
+    let g = buildWarpedGrid(damp);
+    for (let iter = 0; iter < MAX_REPAIR_ITER; iter++) {
+      const hits = findTangles(g);
+      if (hits.length === 0) break;
+      const clamp = (v) => Math.max(0, Math.min(N - 1, v));
+      for (const h of hits) {
+        // 꼬인 지점은 두 줄 사이에서 생기므로, 양쪽 줄의 앞뒤 노드까지 함께 눌러야 곡선이 펴짐
+        const cells = h.dir === 'v'
+          ? [[h.i, h.j], [h.i, h.j + 1], [clamp(h.i + 1), h.j], [clamp(h.i + 1), h.j + 1],
+             [clamp(h.i - 1), h.j], [clamp(h.i - 1), h.j + 1]]
+          : [[h.i, h.j], [h.i + 1, h.j], [h.i, clamp(h.j + 1)], [h.i + 1, clamp(h.j + 1)],
+             [h.i, clamp(h.j - 1)], [h.i + 1, clamp(h.j - 1)]];
+        for (const [ci, cj] of cells) damp[ci][cj] *= DAMP_STEP;
+      }
+      g = buildWarpedGrid(damp);
+    }
+    return g;
+  }
+
+  function resetGame(keepGrid) {
+    board = Array.from({ length: N }, () => Array(N).fill(0));
+    turn = 1;
+    gameOver = false;
+    lastMove = null;
+    winLine = null;
+    moveHistory = [];
+    msg.textContent = '';
+    if (!keepGrid) generateGrid(Date.now() % 100000 + Math.floor(Math.random() * 1000), intensity);
+    updateHud();
+    draw();
+  }
+
+  function updateHud() {
+    turnDot.className = 'dot ' + (turn === 1 ? 'black' : 'white');
+    turnText.textContent = (turn === 1 ? '흑' : '백') + ' 차례';
+  }
+
+  // Catmull-Rom → Bezier 변환: 주어진 점들을 "정확히" 통과하는 부드러운 곡선.
+  // (이전의 중점 기반 방식은 노드 좌표를 살짝 비껴가서 점과 선이 어긋나 보이는 문제가 있었음)
+  function strokeSmoothPath(points, color, width) {
+    if (points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    if (points.length === 2) {
+      ctx.lineTo(points[1].x, points[1].y);
+    } else {
+      for (let k = 0; k < points.length - 1; k++) {
+        const p0 = points[k - 1] || points[k];
+        const p1 = points[k];
+        const p2 = points[k + 1];
+        const p3 = points[k + 2] || p2;
+        const c1x = p1.x + (p2.x - p0.x) / 6;
+        const c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6;
+        const c2y = p2.y - (p3.y - p1.y) / 6;
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
+      }
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, SIZE, SIZE);
+
+    // 세로줄 (열 j 고정, i 변화)
+    for (let j = 0; j < N; j++) {
+      const pts = [];
+      for (let i = 0; i < N; i++) pts.push(grid[i][j]);
+      strokeSmoothPath(pts, 'rgba(44,57,104,0.55)', 1.6);
+    }
+    // 가로줄 (행 i 고정, j 변화)
+    for (let i = 0; i < N; i++) {
+      const pts = [];
+      for (let j = 0; j < N; j++) pts.push(grid[i][j]);
+      strokeSmoothPath(pts, 'rgba(44,57,104,0.75)', 1.8);
+    }
+
+    // 승리 라인 강조
+    if (winLine) {
+      const pts = winLine.map(([i, j]) => grid[i][j]);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+      ctx.strokeStyle = 'rgba(178,59,59,0.85)';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    // 노드 + 돌
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const p = grid[i][j];
+        const v = board[i][j];
+        if (v === 0) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2.4, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(44,57,104,0.45)';
+          ctx.fill();
+        } else {
+          const r = SPACING * 0.27;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          if (v === 1) {
+            const g = ctx.createRadialGradient(p.x - r*0.3, p.y - r*0.3, r*0.1, p.x, p.y, r);
+            g.addColorStop(0, '#4a4c55');
+            g.addColorStop(1, '#0f1013');
+            ctx.fillStyle = g;
+          } else {
+            const g = ctx.createRadialGradient(p.x - r*0.3, p.y - r*0.3, r*0.1, p.x, p.y, r);
+            g.addColorStop(0, '#ffffff');
+            g.addColorStop(1, '#dedbd2');
+            ctx.fillStyle = g;
+          }
+          ctx.fill();
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+          ctx.stroke();
+
+          if (lastMove && lastMove[0] === i && lastMove[1] === j) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r * 0.4, 0, Math.PI * 2);
+            ctx.strokeStyle = v === 1 ? '#ddd' : '#b23b3b';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+  }
+
+  function findNearestNode(x, y) {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const p = grid[i][j];
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < bestD) { bestD = d; best = [i, j]; }
+      }
+    }
+    if (bestD <= HIT_R) return best;
+    return null;
+  }
+
+  function checkWin(i, j, player) {
+    const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+    for (const [di, dj] of dirs) {
+      const line = [[i, j]];
+      let ci = i + di, cj = j + dj;
+      while (ci >= 0 && ci < N && cj >= 0 && cj < N && board[ci][cj] === player) {
+        line.push([ci, cj]); ci += di; cj += dj;
+      }
+      ci = i - di; cj = j - dj;
+      while (ci >= 0 && ci < N && cj >= 0 && cj < N && board[ci][cj] === player) {
+        line.unshift([ci, cj]); ci -= di; cj -= dj;
+      }
+      if (line.length >= 5) return line;
+    }
+    return null;
+  }
+
+  // 착수 처리 본체. 클릭과 새로고침 복원(기록 재생)이 같은 경로를 타도록 분리해둠
+  function placeStone(i, j) {
+    if (gameOver || board[i][j] !== 0) return false;
+    board[i][j] = turn;
+    lastMove = [i, j];
+    moveHistory.push({ i, j, player: turn });
+    const win = checkWin(i, j, turn);
+    if (win) {
+      gameOver = true;
+      winLine = win;
+      msg.textContent = (turn === 1 ? '흑' : '백') + ' 승리!';
+    } else {
+      turn = turn === 1 ? 2 : 1;
+      updateHud();
+    }
+    return true;
+  }
+
+  function handlePick(clientX, clientY) {
+    if (gameOver) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = SIZE / rect.width;
+    const scaleY = SIZE / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+    const node = findNearestNode(x, y);
+    if (!node) return;
+    if (!placeStone(node[0], node[1])) return;
+    draw();
+    saveSession();
+  }
+
+  function undoMove() {
+    if (moveHistory.length === 0) return;
+    const last = moveHistory.pop();
+    board[last.i][last.j] = 0;
+    turn = last.player;
+    gameOver = false;
+    winLine = null;
+    msg.textContent = '';
+    if (moveHistory.length > 0) {
+      const prev = moveHistory[moveHistory.length - 1];
+      lastMove = [prev.i, prev.j];
+    } else {
+      lastMove = null;
+    }
+    updateHud();
+    draw();
+    saveSession();
+  }
+
+  function applyZoom() {
+    canvas.style.width = (zoom * 100) + '%';
+    canvas.style.height = 'auto';
+    zoomVal.textContent = Math.round(zoom * 100) + '%';
+  }
+
+  // 손가락 하나면 탭(착수) 또는 드래그(화면 이동), 둘이면 핀치 확대·축소.
+  // 캔버스에 touch-action:none이 걸려 있어 브라우저 기본 확대가 안 먹으므로 직접 처리함.
+  const DRAG_THRESHOLD = 6;
+  const pointers = new Map(); // pointerId → 마지막 좌표
+  let dragMoved = false;
+  let startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
+  let pinchStartDist = 0, pinchStartZoom = 1;
+
+  function pointerList() { return [...pointers.values()]; }
+  function pinchDistance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+  // 화면상의 한 점을 고정한 채 배율만 바꿈 → 두 손가락 사이 지점이 제자리에 머무름
+  function zoomAround(newZoom, clientX, clientY) {
+    const prevW = canvas.getBoundingClientRect().width;
+    const rect = boardScroll.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const relY = clientY - rect.top;
+    // 캔버스는 정사각형이라 가로 크기 하나로 세로까지 환산됨
+    const fx = prevW ? (boardScroll.scrollLeft + relX) / prevW : 0;
+    const fy = prevW ? (boardScroll.scrollTop + relY) / prevW : 0;
+    zoom = Math.max(1, Math.min(4, newZoom));
+    applyZoom();
+    const newW = canvas.getBoundingClientRect().width;
+    boardScroll.scrollLeft = fx * newW - relX;
+    boardScroll.scrollTop = fy * newW - relY;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    canvas.setPointerCapture(e.pointerId);
+    if (pointers.size === 1) {
+      dragMoved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      startScrollLeft = boardScroll.scrollLeft;
+      startScrollTop = boardScroll.scrollTop;
+    } else if (pointers.size === 2) {
+      const [a, b] = pointerList();
+      pinchStartDist = pinchDistance(a, b);
+      pinchStartZoom = zoom;
+      dragMoved = true; // 핀치 중에는 손을 떼도 돌이 놓이지 않게 함
+    }
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size >= 2) {
+      const [a, b] = pointerList();
+      const dist = pinchDistance(a, b);
+      if (pinchStartDist > 0) {
+        zoomAround(pinchStartZoom * (dist / pinchStartDist), (a.x + b.x) / 2, (a.y + b.y) / 2);
+      }
+      return;
+    }
+
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!dragMoved && Math.hypot(dx, dy) > DRAG_THRESHOLD) dragMoved = true;
+    if (dragMoved) {
+      boardScroll.scrollLeft = startScrollLeft - dx;
+      boardScroll.scrollTop = startScrollTop - dy;
+    }
+  });
+
+  function endPointer(e, allowTap) {
+    if (!pointers.has(e.pointerId)) return;
+    const wasSingle = pointers.size === 1;
+    pointers.delete(e.pointerId);
+    if (allowTap && wasSingle && !dragMoved) handlePick(e.clientX, e.clientY);
+    // 핀치에서 손가락 하나만 떼면 남은 손가락으로 판이 튀지 않게 드래그 기준점을 다시 잡음
+    if (pointers.size === 1) {
+      const [p] = pointerList();
+      startX = p.x;
+      startY = p.y;
+      startScrollLeft = boardScroll.scrollLeft;
+      startScrollTop = boardScroll.scrollTop;
+      dragMoved = true; // 핀치 직후이므로 착수로 이어지지 않게 함
+    }
+  }
+  canvas.addEventListener('pointerup', (e) => endPointer(e, true));
+  canvas.addEventListener('pointercancel', (e) => endPointer(e, false));
+
+  // ---- 판 모양 저장 ----
+  //
+  // 판은 시드 + 세기 + 꼬임허용 세 값으로 완전히 재현되므로 돌 배치는 저장하지 않음.
+  // 브라우저 localStorage에만 남으므로 다른 기기·다른 브라우저에서는 안 보임.
+  const STORAGE_KEY = 'wave-omok:boards';
+  const SESSION_KEY = 'wave-omok:current';
+  const savedList = document.getElementById('savedList');
+  const loadBoardBtn = document.getElementById('loadBoardBtn');
+  const deleteBoardBtn = document.getElementById('deleteBoardBtn');
+
+  // 시크릿 모드 등에서 localStorage 접근 자체가 예외를 던질 수 있어 전부 try로 감쌈
+  function readSavedBoards() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writeSavedBoards(list) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      return true;
+    } catch (e) {
+      msg.textContent = '이 브라우저에서는 저장을 쓸 수 없음';
+      return false;
+    }
+  }
+
+  function refreshSavedList() {
+    const list = readSavedBoards();
+    savedList.innerHTML = '';
+    if (list.length === 0) {
+      const opt = document.createElement('option');
+      opt.textContent = '저장한 판 없음';
+      savedList.appendChild(opt);
+    } else {
+      for (const b of list) {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name;
+        savedList.appendChild(opt);
+      }
+    }
+    savedList.disabled = list.length === 0;
+    loadBoardBtn.disabled = list.length === 0;
+    deleteBoardBtn.disabled = list.length === 0;
+  }
+
+  function saveCurrentBoard() {
+    const list = readSavedBoards();
+    const pct = Math.round(intensity * 100);
+    const suggested = '판 ' + (list.length + 1) + ' (' + pct + '%' + (allowTangleCheck.checked ? ', 꼬임' : '') + ')';
+    const name = (prompt('저장할 이름', suggested) || '').trim() || suggested;
+    list.push({
+      id: String(Date.now()),
+      name,
+      seed,
+      intensity,
+      allowTangle: allowTangleCheck.checked
+    });
+    if (!writeSavedBoards(list)) return;
+    refreshSavedList();
+    savedList.value = list[list.length - 1].id;
+    msg.textContent = '"' + name + '" 저장함';
+  }
+
+  // 불러오면 그 판 모양으로 새 게임을 시작함 (돌은 저장 대상이 아니므로 초기화)
+  function loadSelectedBoard() {
+    const list = readSavedBoards();
+    const target = list.find(b => b.id === savedList.value);
+    if (!target) return;
+    allowTangleCheck.checked = !!target.allowTangle;
+    warpSlider.value = Math.round(target.intensity * 100);
+    warpVal.textContent = warpSlider.value + '%';
+    generateGrid(target.seed, target.intensity);
+    resetGame(true); // 판은 방금 만든 것을 그대로 쓰고 돌만 비움
+    saveSession();
+    msg.textContent = '"' + target.name + '" 불러옴';
+  }
+
+  function deleteSelectedBoard() {
+    const list = readSavedBoards();
+    const target = list.find(b => b.id === savedList.value);
+    if (!target) return;
+    if (!confirm('"' + target.name + '" 삭제할까요?')) return;
+    if (!writeSavedBoards(list.filter(b => b.id !== target.id))) return;
+    refreshSavedList();
+    msg.textContent = '"' + target.name + '" 삭제함';
+  }
+
+  // ---- 온라인 대전 ----
+  //
+  // 방·초대 없는 최소 구현(1단계). 체크박스를 켠 사람들이 DB의 같은 경로 하나를 공유함
+  // 흑·백 배정도 턴 제한도 없음 — 지금의 로컬 2인 플레이가 화면만 공유되는 형태
+  //
+  // 동기화 방식: 바뀐 수만 보내지 않고 "판 상태 통째"를 덮어씀
+  //   - 착수·무르기·새 판·다시 시작이 전부 경로 하나로 처리됨. 동작별 분기가 없음
+  //   - 판은 시드로, 돌은 착수 기록으로 복원되므로 통째라도 최대 225수뿐이라 데이터가 작음
+  //   - 재접속·새로고침 복원이 따로 짤 것 없이 그냥 따라옴
+  //
+  // 둘이 동시에 두면 나중에 쓴 쪽이 이기고 상대 수가 사라짐. 턴 제한이 없는 1단계라 감수함
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyAZvNJjUdua_EVsNtrsNcH31KB25vKC9rw",
+    authDomain: "wave-omok.firebaseapp.com",
+    databaseURL: "https://wave-omok-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "wave-omok",
+    storageBucket: "wave-omok.firebasestorage.app",
+    messagingSenderId: "24140803014",
+    appId: "1:24140803014:web:6d09bd7b396ce7df01e0c7"
+  };
+  const GAME_PATH = 'game';                 // 방이 없으므로 모두가 이 경로 하나를 씀
+  const CHAT_PATH = 'chat';                 // 채팅도 방이 없으므로 경로 하나를 공유
+  const CHAT_LIMIT = 50;                    // 접속 시 불러오는 최근 메시지 수
+  const ME_KEY = 'wave-omok:me';            // 내 메시지를 가려내기 위한 임시 식별자
+  const NICK_KEY = 'wave-omok:nick';        // 채팅에 표시할 이름
+  const USERS_PATH = 'users';               // 식별자 → 이름. 메시지와 따로 둠
+
+  let online = false;
+  let gameRef = null, gameHandler = null;
+  let connRef = null, connHandler = null;
+  let chatRef = null, chatQuery = null, chatHandler = null, chatRemoveHandler = null;
+  let usersRef = null, usersHandler = null;
+  let nickMap = {};  // 식별자 → 현재 이름
+  let applyingRemote = false;  // 원격 반영 중에는 서버로 되쏘지 않음
+  let lastSig = null;          // 마지막으로 주고받은 상태. 내가 쓴 값의 에코를 걸러냄
+
+  /**
+   * Firebase 앱 초기화를 보장하고 database 핸들을 돌려줌
+   *
+   * SDK가 안 실린 환경(오프라인 등)이면 null. 온라인 연결과 관리 패널이
+   * 같은 초기화를 쓰도록 분리해둠
+   */
+  function ensureDb() {
+    if (typeof firebase === 'undefined') return null;
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+      return firebase.database();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setOnlineStatus(text) { onlineStatus.textContent = text; }
+
+  // ---- 채팅 ----
+  //
+  // 닉네임도 로그인도 없음. 보낸 사람 구분은 임시 식별자 하나로만 하고,
+  // 화면에는 좌우 정렬(내 것 오른쪽 / 상대 왼쪽)로만 드러남
+
+  /**
+   * 내 임시 식별자 반환. 없으면 만들어서 localStorage에 남김
+   *
+   * 새로고침해도 내 메시지가 계속 내 것으로 보이게 하려고 저장함
+   * 저장이 막힌 환경(시크릿 모드 등)이면 매번 새로 생기므로, 새로고침 후
+   * 이전에 보낸 내 메시지가 상대 것처럼 보임 — 채팅 자체는 정상 동작하므로 감수함
+   */
+  let myId = null;
+  function getMyId() {
+    if (myId) return myId;
+    const gen = () => Math.random().toString(36).slice(2, 10);
+    try {
+      myId = localStorage.getItem(ME_KEY);
+      if (!myId) {
+        myId = gen();
+        localStorage.setItem(ME_KEY, myId);
+      }
+    } catch (e) {
+      myId = gen();
+    }
+    return myId;
+  }
+
+  /**
+   * 채팅에 쓸 이름 반환
+   *
+   * 입력창이 비어 있으면 식별자 앞자리를 붙인 기본 이름을 씀
+   * (이름 없는 메시지가 섞이면 누가 보냈는지 알 수 없어짐)
+   */
+  function getNick() {
+    const v = nickInput.value.trim();
+    return v || ('손님' + getMyId().slice(0, 4));
+  }
+
+  /** 저장해둔 이름을 입력창에 복원. 처음이면 기본 이름을 채워 넣음 */
+  function loadNick() {
+    let saved = null;
+    try { saved = localStorage.getItem(NICK_KEY); } catch (e) { /* 무시 */ }
+    nickInput.value = saved || ('손님' + getMyId().slice(0, 4));
+  }
+
+  /**
+   * 식별자에 해당하는 현재 이름을 돌려줌
+   *
+   * @param {string} from     보낸 사람의 임시 식별자
+   * @param {string} fallback 이름 목록에 없을 때 쓸 값 (예전 메시지에 박혀 있던 이름)
+   */
+  function displayName(from, fallback) {
+    return nickMap[from] || fallback || '손님';
+  }
+
+  /**
+   * 이미 화면에 뿌려진 메시지들의 이름표를 현재 이름으로 다시 씀
+   *
+   * 이름을 바꾸면 그 사람이 이전에 보낸 메시지의 이름도 같이 바뀌어야 하므로,
+   * 메시지에 이름을 박아두지 않고 표시할 때마다 이름 목록을 참조함
+   */
+  function refreshChatNames() {
+    for (const box of chatLog.querySelectorAll('.chat-msg')) {
+      const nameEl = box.querySelector('.chat-name');
+      if (nameEl) nameEl.textContent = displayName(box.dataset.from, box.dataset.fallbackName);
+    }
+  }
+
+  /** 내 이름을 서버의 이름 목록에 올림. 상대 화면의 지난 메시지까지 이 값으로 갱신됨 */
+  function publishNick() {
+    if (!online || !usersRef) return;
+    usersRef.child(getMyId()).set({ name: getNick() }).catch(() => { /* 이름 갱신 실패는 무시 */ });
+  }
+
+  // 온라인이 아닐 때도 다른 창의 이름 변경을 따라감.
+  // storage 이벤트는 값을 바꾼 창 자신에게는 오지 않으므로 되울림 걱정이 없음
+  window.addEventListener('storage', e => {
+    if (e.key !== NICK_KEY || !e.newValue) return;
+    nickInput.value = e.newValue.slice(0, 12);
+  });
+
+  nickInput.addEventListener('change', () => {
+    nickInput.value = nickInput.value.trim().slice(0, 12);
+    try { localStorage.setItem(NICK_KEY, getNick()); } catch (e) { /* 무시 */ }
+    publishNick();
+  });
+
+  /**
+   * 메시지 한 줄을 화면에 붙이고 맨 아래로 스크롤
+   *
+   * @param {string} from 보낸 사람의 임시 식별자
+   * @param {string} text 메시지 본문
+   *
+   * 본문은 반드시 textContent로 넣음. 남이 보낸 문자열이라 innerHTML로 넣으면
+   * 태그가 그대로 실행됨 (DB가 테스트 모드라 아무나 쓸 수 있는 상태이기도 함)
+   */
+  let lastChatFrom = null;  // 같은 사람이 연달아 보내면 이름을 반복해서 찍지 않으려고 기억함
+
+  function appendChatLine(key, from, fallbackName, text) {
+    chatEmpty.hidden = true;
+    const mine = from === getMyId();
+
+    const box = document.createElement('div');
+    box.className = 'chat-msg ' + (mine ? 'mine' : 'theirs');
+    // 이름표를 나중에 다시 쓰려면 이 메시지가 누구 것인지 남겨둬야 함
+    box.dataset.from = from;
+    if (fallbackName) box.dataset.fallbackName = fallbackName;
+    if (key) box.dataset.key = key;
+
+    // 내 메시지는 오른쪽에 붙어 있어 이름이 없어도 구분되므로 상대 것만 이름을 붙임
+    if (!mine && from !== lastChatFrom) {
+      const nameEl = document.createElement('div');
+      nameEl.className = 'chat-name';
+      nameEl.textContent = displayName(from, fallbackName);
+      box.appendChild(nameEl);
+    }
+
+    const el = document.createElement('div');
+    el.className = 'chat-line ' + (mine ? 'mine' : 'theirs');
+    el.textContent = text;
+    box.appendChild(el);
+
+    chatLog.appendChild(box);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    lastChatFrom = from;
+  }
+
+  /**
+   * 채팅 로그 비우기
+   *
+   * 온라인을 껐다 켜면 최근 50개를 처음부터 다시 받으므로,
+   * 비우지 않으면 같은 메시지가 두 번씩 쌓임
+   */
+  function clearChatLog() {
+    for (const el of [...chatLog.querySelectorAll('.chat-msg')]) el.remove();
+    chatEmpty.hidden = false;
+    lastChatFrom = null;
+  }
+
+  /** 입력창 활성/비활성. 온라인이 꺼져 있으면 보낼 곳이 없으므로 잠금 */
+  function setChatEnabled(on) {
+    chatInput.disabled = !on;
+    chatSendBtn.disabled = !on;
+    nickInput.disabled = !on;
+    chatEmpty.textContent = on ? '아직 대화 없음' : '온라인 대전을 켜면 대화할 수 있음';
+  }
+
+  /** 입력창 내용을 서버로 보냄. 보낸 메시지는 서버를 한 바퀴 돌아 화면에 나타남 */
+  function sendChat() {
+    if (!online || !chatRef) return;
+    const text = chatInput.value.trim();
+    if (!text) return;
+    chatInput.value = '';
+    chatRef.push({ from: getMyId(), name: getNick(), text: text.slice(0, 200), ts: Date.now() })
+      .catch(() => setOnlineStatus('채팅 전송 실패'));
+  }
+
+  chatSendBtn.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+  });
+
+
+  /**
+   * 판 상태를 문자열 하나로 요약
+   *
+   * 객체를 통째로 비교하면 안 됨. Firebase가 빈 배열 키를 지우는 등 형태를 바꿔서
+   * 내용이 같아도 문자열이 달라짐. 그래서 필요한 값만 뽑아 정규화함
+   *
+   * 사용처: 내가 방금 보낸 값이 되돌아왔는지 판별 (무한 반영 루프 방지)
+   */
+  function sigOf(st) {
+    return [
+      st.seed,
+      Math.round(st.intensity * 100),
+      st.allowTangle ? 1 : 0,
+      st.moves.map(m => m[0] + ',' + m[1]).join(';')
+    ].join('|');
+  }
+
+  /** 지금 화면의 판 상태를 전송용 객체로 만듦 */
+  function currentState() {
+    return {
+      seed,
+      intensity,
+      allowTangle: allowTangleCheck.checked,
+      moves: moveHistory.map(m => [m.i, m.j])
+    };
+  }
+
+  /**
+   * 서버에서 받은 값을 currentState()와 같은 모양으로 정리
+   *
+   * 남이 DB를 직접 건드릴 수 있는 구조라(테스트 모드) 값이 망가져 있어도
+   * 게임이 깨지지 않도록 좌표를 하나씩 검사함. 형식이 아니면 null
+   */
+  function normalizeState(raw) {
+    if (!raw || typeof raw.seed !== 'number' || typeof raw.intensity !== 'number') return null;
+    const moves = [];
+    const list = Array.isArray(raw.moves) ? raw.moves : [];
+    for (const mv of list) {
+      if (!Array.isArray(mv)) continue;
+      const [i, j] = mv;
+      if (!Number.isInteger(i) || !Number.isInteger(j)) continue;
+      if (i < 0 || i >= N || j < 0 || j >= N) continue;
+      moves.push([i, j]);
+    }
+    return { seed: raw.seed, intensity: raw.intensity, allowTangle: !!raw.allowTangle, moves };
+  }
+
+  /**
+   * 현재 상태를 서버에 올림
+   *
+   * saveSession()에서 호출됨. 착수·무르기·새 판·슬라이더 조작이 전부 saveSession()을 거치므로
+   * 여기 한 곳만 붙이면 모든 변경이 자동으로 동기화됨 (동작마다 전송 코드를 넣지 않아도 됨)
+   */
+  function pushState() {
+    if (!online || !gameRef || applyingRemote) return;
+    const st = currentState();
+    lastSig = sigOf(st);
+    gameRef.set(st).catch(() => setOnlineStatus('전송 실패'));
+  }
+
+  /**
+   * 서버 상태를 화면에 반영
+   *
+   * 착수 기록을 처음부터 다시 재생함. restoreSession()과 같은 방식이고
+   * 최대 225수라 매번 전부 재생해도 부담이 없음
+   *
+   * @param {object} st normalizeState()를 거친 판 상태
+   */
+  function applyRemote(st) {
+    applyingRemote = true;
+    try {
+      // 시드·세기·꼬임설정이 노드 좌표를 결정하므로, 다르면 격자부터 다시 만듦
+      if (st.seed !== seed || st.intensity !== intensity || st.allowTangle !== allowTangleCheck.checked) {
+        allowTangleCheck.checked = st.allowTangle;
+        warpSlider.value = Math.round(st.intensity * 100);
+        warpVal.textContent = warpSlider.value + '%';
+        generateGrid(st.seed, st.intensity);
+      }
+      resetGame(true);
+      for (const mv of st.moves) placeStone(mv[0], mv[1]);
+      updateHud();
+      draw();
+      saveSession();  // applyingRemote가 켜져 있어 서버로 되돌아가지는 않음
+    } finally {
+      applyingRemote = false;
+    }
+  }
+
+  /**
+   * 온라인 연결 시작
+   *
+   * 서버에 판이 이미 있으면 그쪽을 따라가고, 비어 있으면 내 판을 올려서 시작함
+   * → 먼저 켠 사람의 판이 기준이 됨 (진행 중이던 내 게임은 상대 판으로 덮어써짐)
+   *
+   * 사용처: 온라인 대전 체크박스, 페이지 로드 시 이전 상태 복원
+   */
+  function connectOnline() {
+    // SDK가 안 실려도(오프라인 등) 게임 자체는 돌아가야 하므로 조용히 끄기만 함
+    if (typeof firebase === 'undefined') {
+      setOnlineStatus('연결 불가 (오프라인?)');
+      onlineCheck.checked = false;
+      return;
+    }
+    const db = ensureDb();
+    if (!db) {
+      setOnlineStatus('연결 실패');
+      onlineCheck.checked = false;
+      return;
+    }
+    gameRef = db.ref(GAME_PATH);
+    connRef = db.ref('.info/connected');
+
+    online = true;
+    setOnlineStatus('연결 중…');
+
+    // 끊김·재접속은 Firebase가 알아서 알려줌. 직접 감시할 필요 없음
+    connHandler = connRef.on('value', snap => {
+      if (!online) return;
+      setOnlineStatus(snap.val() ? '연결됨' : '끊김 — 재접속 중…');
+    });
+
+    gameHandler = gameRef.on('value', snap => {
+      const st = normalizeState(snap.val());
+      if (!st) { pushState(); return; }    // 서버가 비어 있으면 내 판을 기준으로 올림
+      const sig = sigOf(st);
+      if (sig === lastSig) return;         // 내가 방금 보낸 값이 돌아온 것
+      lastSig = sig;
+      applyRemote(st);
+    }, () => setOnlineStatus('수신 오류'));
+
+    // 최근 CHAT_LIMIT개만 받아옴. child_added는 기존 메시지도 순서대로 흘려주므로
+    // 이 구독 하나로 "지난 대화 불러오기 + 새 메시지 수신"이 같이 처리됨
+    clearChatLog();
+    setChatEnabled(true);
+
+    // 이름 목록을 통째로 구독함. 누가 이름을 바꾸면 화면의 지난 메시지까지 함께 갱신됨
+    usersRef = db.ref(USERS_PATH);
+    usersHandler = usersRef.on('value', snap => {
+      const raw = snap.val() || {};
+      const next = {};
+      for (const id of Object.keys(raw)) {
+        const n = raw[id] && raw[id].name;
+        if (typeof n === 'string' && n.trim()) next[id] = n.slice(0, 12);
+      }
+      nickMap = next;
+      refreshChatNames();
+
+      // 같은 브라우저의 다른 창에서 이름을 바꿨으면 이 창도 따라감.
+      // 식별자가 같아 서버에는 어차피 이름이 하나뿐인데 입력칸만 다른 값을
+      // 들고 있으면, 다음에 보낼 때 이름이 되돌아가 서로 엎치락뒤치락함
+      const myName = nickMap[getMyId()];
+      if (myName && myName !== nickInput.value) {
+        nickInput.value = myName;
+        try { localStorage.setItem(NICK_KEY, myName); } catch (e) { /* 무시 */ }
+      }
+    }, () => { /* 이름을 못 받아도 채팅 자체는 동작해야 하므로 예비값으로 표시됨 */ });
+    publishNick();
+
+    chatRef = db.ref(CHAT_PATH);
+    chatQuery = chatRef.limitToLast(CHAT_LIMIT);
+    chatHandler = chatQuery.on('child_added', snap => {
+      const m = snap.val();
+      if (!m || typeof m.text !== 'string') return;
+      // m.name은 보낼 당시 이름. 이름 목록에 그 사람이 없을 때만 쓰는 예비값임
+      const fallback = (typeof m.name === 'string' && m.name.trim()) ? m.name.slice(0, 12) : '';
+      appendChatLine(snap.key, m.from, fallback, m.text.slice(0, 200));
+    }, () => setOnlineStatus('채팅 수신 오류'));
+
+    // 관리 패널에서 대화를 지웠을 때 보고 있는 사람들 화면에서도 같이 사라지게 함
+    // (구독 없이 지우면 새로고침하기 전까지 지워진 메시지가 계속 남아 있음)
+    chatRemoveHandler = chatQuery.on('child_removed', snap => {
+      const box = chatLog.querySelector('.chat-msg[data-key="' + snap.key + '"]');
+      if (box) box.remove();
+      if (!chatLog.querySelector('.chat-msg')) {
+        chatEmpty.hidden = false;
+        lastChatFrom = null;
+      }
+    });
+  }
+
+  /** 온라인 연결 종료. 구독을 모두 해제해 이후 변경이 화면에 반영되지 않게 함 */
+  function disconnectOnline() {
+    online = false;
+    if (gameRef && gameHandler) gameRef.off('value', gameHandler);
+    if (connRef && connHandler) connRef.off('value', connHandler);
+    if (chatQuery && chatHandler) chatQuery.off('child_added', chatHandler);
+    if (chatQuery && chatRemoveHandler) chatQuery.off('child_removed', chatRemoveHandler);
+    if (usersRef && usersHandler) usersRef.off('value', usersHandler);
+    gameRef = gameHandler = connRef = connHandler = null;
+    chatRef = chatQuery = chatHandler = chatRemoveHandler = null;
+    usersRef = usersHandler = null;
+    nickMap = {};
+    clearChatLog();
+    setChatEnabled(false);
+    lastSig = null;
+    setOnlineStatus('꺼짐');
+  }
+
+  // ---- 참가 시 닉네임 확인 ----
+  //
+  // 체크하자마자 연결하지 않고 이름부터 물음. 이름 없이 들어가면 대화에서
+  // 누가 누군지 알 수 없고, 나중에 바꾸라고 안내해도 잘 안 바꾸기 때문
+
+  function openNickModal() {
+    loadNick();  // 다른 창에서 바꿨을 수 있으므로 저장된 값을 다시 읽음
+    nickModalInput.value = nickInput.value;
+    nickModal.hidden = false;
+    nickModalInput.focus();
+    nickModalInput.select();
+  }
+
+  /** 모달을 닫고 온라인 체크도 되돌림. 취소·ESC로 나갈 때 씀 */
+  function cancelNickModal() {
+    nickModal.hidden = true;
+    onlineCheck.checked = false;
+  }
+
+  /** 입력한 이름을 확정하고 연결 시작. 비워두면 기본 이름이 쓰임 */
+  function confirmNickModal() {
+    nickInput.value = nickModalInput.value.trim().slice(0, 12);
+    if (!nickInput.value) nickInput.value = getNick();
+    try { localStorage.setItem(NICK_KEY, getNick()); } catch (e) { /* 무시 */ }
+    nickModal.hidden = true;
+    connectOnline();
+  }
+
+  nickOkBtn.addEventListener('click', confirmNickModal);
+  nickCancelBtn.addEventListener('click', cancelNickModal);
+  nickModalInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); confirmNickModal(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelNickModal(); }
+  });
+  // 바깥 어두운 영역을 누르면 취소 (모달 안쪽 클릭은 무시)
+  nickModal.addEventListener('click', e => {
+    if (e.target === nickModal) cancelNickModal();
+  });
+
+  // ---- 관리 패널 ----
+  //
+  // ?view=admin 으로 열었을 때만 보임. 이건 "가려두기"일 뿐 권한 통제가 아님 —
+  // 코드가 브라우저에 그대로 내려가므로 파라미터 이름은 소스를 보면 드러남
+  // 지금은 DB가 테스트 모드라 주소만 알면 누구나 쓸 수 있어 실질적인 차이가 없고,
+  // 제대로 잠그려면 인증을 붙여야 함 (todo 2단계)
+
+  /**
+   * DB의 한 경로를 통째로 지움
+   *
+   * @param {string} path  지울 경로
+   * @param {string} label 확인 문구와 결과 표시에 쓸 이름
+   * @param {function} [after] 삭제 성공 후 로컬 화면을 정리할 동작
+   *
+   * 되돌릴 수 없으므로 확인을 한 번 받음
+   */
+  function adminWipe(path, label, after) {
+    if (!window.confirm(label + '?')) return;
+    const db = ensureDb();
+    if (!db) { adminMsg.textContent = '연결할 수 없음'; return; }
+    adminMsg.textContent = '지우는 중…';
+    db.ref(path).remove()
+      .then(() => {
+        adminMsg.textContent = label + ' 완료';
+        if (after) after();
+      })
+      .catch(() => { adminMsg.textContent = label + ' 실패'; });
+  }
+
+  if (new URLSearchParams(location.search).get('view') === 'admin') {
+    adminPanel.hidden = false;
+  }
+
+  document.getElementById('adminClearChatBtn').addEventListener('click', () => {
+    // 지켜보는 사람들 화면은 child_removed 구독이 알아서 지움
+    adminWipe(CHAT_PATH, '대화 초기화', clearChatLog);
+  });
+
+  document.getElementById('adminClearGameBtn').addEventListener('click', () => {
+    // 판을 지우면 접속자들이 각자 자기 판을 다시 올리므로, 먼저 내 판을 비워둠
+    adminWipe(GAME_PATH, '판 초기화', () => {
+      resetGame(true);
+      saveSession();
+    });
+  });
+
+  document.getElementById('adminClearUsersBtn').addEventListener('click', () => {
+    // 이름이 사라지면 메시지에 박혀 있던 예비 이름으로 표시됨
+    adminWipe(USERS_PATH, '이름 목록 정리', () => {
+      nickMap = {};
+      refreshChatNames();
+      publishNick();  // 내 이름은 다시 올려둠
+    });
+  });
+
+  onlineCheck.addEventListener('change', () => {
+    if (onlineCheck.checked) openNickModal();
+    else disconnectOnline();
+  });
+
+  // ---- 진행 중인 게임 자동 저장 (새로고침해도 안 날아감) ----
+  //
+  // 판 모양은 시드로, 돌 배치는 착수 기록으로 복원함. 기록을 다시 재생하면
+  // 돌·차례·승패까지 전부 되살아나므로 판 상태를 통째로 저장할 필요가 없음.
+  // 저장이 막힌 환경이면 조용히 넘어감 (게임 진행 자체는 문제없음)
+  function saveSession() {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        seed,
+        intensity,
+        allowTangle: allowTangleCheck.checked,
+        moves: moveHistory.map(m => [m.i, m.j])
+      }));
+    } catch (e) { /* 저장 못 해도 게임은 계속 진행됨 */ }
+    pushState();  // 온라인이면 같은 변경을 서버에도 반영
+  }
+
+  function restoreSession() {
+    let s = null;
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      s = raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return false;
+    }
+    if (!s || typeof s.seed !== 'number' || typeof s.intensity !== 'number') return false;
+
+    allowTangleCheck.checked = !!s.allowTangle;
+    warpSlider.value = Math.round(s.intensity * 100);
+    warpVal.textContent = warpSlider.value + '%';
+    generateGrid(s.seed, s.intensity);
+    resetGame(true);
+
+    // 착수 기록 재생. 저장된 값이 망가져 있어도 게임이 깨지지 않도록 좌표를 검사함
+    const moves = Array.isArray(s.moves) ? s.moves : [];
+    for (const mv of moves) {
+      if (!Array.isArray(mv)) continue;
+      const [i, j] = mv;
+      if (!Number.isInteger(i) || !Number.isInteger(j)) continue;
+      if (i < 0 || i >= N || j < 0 || j >= N) continue;
+      placeStone(i, j);
+    }
+    updateHud();
+    draw();
+    saveSession();
+    return true;
+  }
+
+  document.getElementById('saveBoardBtn').addEventListener('click', saveCurrentBoard);
+  loadBoardBtn.addEventListener('click', loadSelectedBoard);
+  deleteBoardBtn.addEventListener('click', deleteSelectedBoard);
+
+  document.getElementById('resetBtn').addEventListener('click', () => { resetGame(true); saveSession(); });
+  document.getElementById('reshuffleBtn').addEventListener('click', () => { resetGame(false); saveSession(); });
+  document.getElementById('undoBtn').addEventListener('click', undoMove);
+  document.getElementById('zoomInBtn').addEventListener('click', () => {
+    zoom = Math.min(4, Math.round((zoom + 0.5) * 100) / 100);
+    applyZoom();
+  });
+  document.getElementById('zoomOutBtn').addEventListener('click', () => {
+    zoom = Math.max(1, Math.round((zoom - 0.5) * 100) / 100);
+    applyZoom();
+  });
+  document.getElementById('zoomResetBtn').addEventListener('click', () => {
+    zoom = 1;
+    applyZoom();
+    boardScroll.scrollLeft = 0;
+    boardScroll.scrollTop = 0;
+  });
+
+  // 슬라이더: 게임 도중에도 실시간으로 삐뚤빼뚤한 정도만 바꿈 (돌 배치는 유지, 모양(위상)도 유지된 채 진폭만 조절)
+  warpSlider.addEventListener('input', () => {
+    const pct = Number(warpSlider.value);
+    warpVal.textContent = pct + '%';
+    generateGrid(seed, pct / 100);
+    draw();
+    saveSession();
+  });
+  warpVal.textContent = warpSlider.value + '%';
+
+  // 체크박스 on: 보정 없이 그대로 → 선이 서로 교차하며 뒤엉킴
+  // 체크박스 off(기본): 꼬이는 지점만 국소 보정 → 판 질감은 그대로 두고 교차만 없앰
+  // 보정 여부에 따라 좌표가 달라지므로 시드는 유지한 채 격자를 다시 생성함
+  allowTangleCheck.addEventListener('change', () => {
+    generateGrid(seed, intensity);
+    draw();
+    saveSession();
+  });
+
+  loadNick();
+  refreshSavedList();
+  applyZoom();
+  // 새로고침 전 진행 상황이 있으면 그대로 이어감. 없으면 새 판으로 시작
+  if (!restoreSession()) resetGame(false);
+
+
+  // 온라인 대전은 항상 꺼진 채로 시작함. 새로고침으로 저절로 남의 판에
+  // 들어가 있는 상황을 막으려는 것 (판·대화는 서버에 남아 있으므로 다시 켜면 이어짐)
+})();
+</script>
+</body>
+</html>
