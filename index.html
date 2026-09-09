@@ -640,6 +640,9 @@
     <div class="match" id="matchPanel" hidden>
       <div class="match-head">
         <span class="match-state" id="matchState">대기 중</span>
+        <button id="pickBlackBtn" hidden>흑</button>
+        <button id="pickWhiteBtn" hidden>백</button>
+        <button id="matchOkBtn" class="primary" hidden>확인</button>
         <button id="readyBtn">준비완료</button>
       </div>
       <div class="match-players" id="matchPlayers"></div>
@@ -745,6 +748,9 @@
   const matchState = document.getElementById('matchState');
   const matchPlayers = document.getElementById('matchPlayers');
   const readyBtn = document.getElementById('readyBtn');
+  const pickBlackBtn = document.getElementById('pickBlackBtn');
+  const pickWhiteBtn = document.getElementById('pickWhiteBtn');
+  const matchOkBtn = document.getElementById('matchOkBtn');
   const boardScroll = document.getElementById('boardScroll');
   const zoomVal = document.getElementById('zoomVal');
 
@@ -1063,6 +1069,7 @@
 
   function handlePick(clientX, clientY) {
     if (gameOver) return;
+    if (!canPlace()) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = SIZE / rect.width;
     const scaleY = SIZE / rect.height;
@@ -1073,10 +1080,12 @@
     if (!placeStone(node[0], node[1])) return;
     draw();
     saveSession();
+    syncMatchEnd();
   }
 
   function undoMove() {
     if (moveHistory.length === 0) return;
+    if (inPlay()) return;
     const last = moveHistory.pop();
     board[last.i][last.j] = 0;
     turn = last.player;
@@ -1184,6 +1193,10 @@
   const STORAGE_KEY = 'wave-omok:boards';
   const SESSION_KEY = 'wave-omok:current';
   const savedList = document.getElementById('savedList');
+  const undoBtn = document.getElementById('undoBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const reshuffleBtn = document.getElementById('reshuffleBtn');
+  const saveBoardBtn = document.getElementById('saveBoardBtn');
   const loadBoardBtn = document.getElementById('loadBoardBtn');
   const deleteBoardBtn = document.getElementById('deleteBoardBtn');
 
@@ -1297,6 +1310,7 @@
   const ROOM_MAX_LIMIT = 20;
   const MATCH_PATH = 'match';
   const COUNTDOWN_MS = 5000;
+  const CHOOSE_MS = 10000;
   const SEATS = 2;
 
   const SESSION_ONLINE_KEY = 'wave-omok:session-online';
@@ -1502,6 +1516,7 @@
     } finally {
       applyingRemote = false;
     }
+    syncMatchEnd();
   }
 
   function placePath(sub) {
@@ -1541,6 +1556,7 @@
       nickMap = next;
       refreshChatNames();
       renderMatch();
+      checkSeatLeft();
 
       updateRoomUI();
 
@@ -1581,7 +1597,13 @@
         match = {
           state: typeof raw.state === 'string' ? raw.state : 'idle',
           ready: raw.ready || {},
-          countStart: typeof raw.countStart === 'number' ? raw.countStart : 0
+          countStart: typeof raw.countStart === 'number' ? raw.countStart : 0,
+          chooser: typeof raw.chooser === 'string' ? raw.chooser : '',
+          chooseStart: typeof raw.chooseStart === 'number' ? raw.chooseStart : 0,
+          black: typeof raw.black === 'string' ? raw.black : '',
+          white: typeof raw.white === 'string' ? raw.white : '',
+          lastChooser: typeof raw.lastChooser === 'string' ? raw.lastChooser : '',
+          result: typeof raw.result === 'string' ? raw.result : ''
         };
         renderMatch();
       }, () => { roomMsg.textContent = '대국 상태를 받지 못함'; });
@@ -1609,6 +1631,7 @@
     matchRef = matchHandler = null;
     match = null;
     stopCountTimer();
+    renderMatch();
 
     if (gameRef && gameHandler) gameRef.off('value', gameHandler);
     if (usersRef && usersHandler) usersRef.off('value', usersHandler);
@@ -1963,9 +1986,113 @@
   }
 
   function checkCountdown() {
-    if (!matchRef || !match || match.state !== 'counting') return;
-    const left = COUNTDOWN_MS - (serverNow() - (match.countStart || 0));
-    if (left <= 0) matchRef.update({ state: 'playing', countStart: null });
+    if (!matchRef || !match) return;
+
+    if (match.state === 'counting') {
+      const left = COUNTDOWN_MS - (serverNow() - (match.countStart || 0));
+      if (left > 0) return;
+
+      const list = readyList();
+      if (list.length < SEATS) { matchRef.update({ state: 'idle', countStart: null }); return; }
+      const prev = match.lastChooser;
+      const next = (prev && list.indexOf(prev) !== -1)
+        ? list[(list.indexOf(prev) + 1) % list.length]
+        : list[Math.floor(Math.random() * list.length)];
+      matchRef.update({
+        state: 'choosing',
+        countStart: null,
+        chooser: next,
+        chooseStart: serverNow()
+      });
+      return;
+    }
+
+    if (match.state === 'choosing') {
+      const left = CHOOSE_MS - (serverNow() - (match.chooseStart || 0));
+
+      if (left <= 0) pickColor(1, true);
+    }
+  }
+
+  function pickColor(color, auto) {
+    if (!matchRef || !match || match.state !== 'choosing') return;
+    const chooser = match.chooser;
+    if (!auto && chooser !== getMyId()) return;
+
+    const list = readyList();
+    const other = list.filter(id => id !== chooser)[0] || '';
+    if (!chooser || !other) {
+      matchRef.update({ state: 'idle', chooser: null, chooseStart: null });
+      return;
+    }
+
+    matchRef.update({
+      state: 'playing',
+      chooseStart: null,
+      black: color === 1 ? chooser : other,
+      white: color === 1 ? other : chooser,
+      lastChooser: chooser
+    });
+  }
+
+  function endMatch(result) {
+    if (!matchRef || !match || match.state !== 'playing') return;
+    matchRef.update({ state: 'ended', result: result });
+  }
+
+  function syncMatchEnd() {
+    if (!inPlay() || !gameOver) return;
+
+    endMatch(msg.textContent || '대국 종료');
+  }
+
+  function resetMatch() {
+    if (!matchRef) return;
+    matchRef.update({
+      state: 'idle',
+      ready: null,
+      countStart: null,
+      chooser: null,
+      chooseStart: null,
+      black: null,
+      white: null,
+      result: null
+    });
+  }
+
+  function checkSeatLeft() {
+    if (!inPlay()) return;
+    const here = nickMap;
+    if (here[match.black] && here[match.white]) return;
+    const gone = here[match.black] ? seatName(match.white) : seatName(match.black);
+    endMatch((gone || '대국자') + ' 님이 나감');
+  }
+
+  function inPlay() {
+    return !!(online && currentRoom && match && match.state === 'playing');
+  }
+
+  function canPlace() {
+    if (!inPlay()) return true;
+    const me = getMyId();
+    if (me !== match.black && me !== match.white) return false;
+    return turn === (me === match.black ? 1 : 2);
+  }
+
+  function updateControlLock() {
+
+    const locked = inPlay() || (online && currentRoom && match && match.state === 'ended');
+    warpSlider.disabled = locked;
+    allowTangleCheck.disabled = locked;
+    undoBtn.disabled = locked;
+    resetBtn.disabled = locked;
+    reshuffleBtn.disabled = locked;
+    loadBoardBtn.disabled = locked;
+    saveBoardBtn.disabled = false;
+  }
+
+  function seatName(id) {
+    return id ? (nickMap[id] || '손님') : '';
   }
 
   function renderMatch() {
@@ -1973,15 +2100,51 @@
     matchPanel.hidden = !inRoom;
     if (!inRoom || !match) {
       stopCountTimer();
+      updateControlLock();
       return;
     }
+    updateControlLock();
 
     const list = readyList();
     const mine = isReady();
+    const state = match.state;
 
-    if (match.state === 'counting') {
+    const iChoose = state === 'choosing' && match.chooser === getMyId();
+    pickBlackBtn.hidden = !iChoose;
+    pickWhiteBtn.hidden = !iChoose;
+
+    matchOkBtn.hidden = state !== 'ended';
+
+    readyBtn.hidden = state === 'choosing' || state === 'playing' || state === 'ended';
+
+    if (state === 'choosing') {
+      const left = Math.max(0, CHOOSE_MS - (serverNow() - (match.chooseStart || 0)));
+      const sec = Math.ceil(left / 1000);
+      matchState.textContent = iChoose
+        ? '색을 고르세요 · ' + sec + '초'
+        : seatName(match.chooser) + ' 님이 색을 고르는 중 · ' + sec + '초';
+      matchPlayers.textContent = '';
+      startCountTimer();
+      return;
+    }
+
+    if (state === 'playing') {
+      matchState.textContent = '대국 중';
+      matchPlayers.textContent = '흑 ' + seatName(match.black) + ' · 백 ' + seatName(match.white);
+      stopCountTimer();
+      return;
+    }
+
+    if (state === 'ended') {
+      matchState.textContent = match.result || '대국 종료';
+      matchPlayers.textContent = '흑 ' + seatName(match.black) + ' · 백 ' + seatName(match.white);
+      stopCountTimer();
+      return;
+    }
+
+    if (state === 'counting') {
       const left = Math.max(0, COUNTDOWN_MS - (serverNow() - (match.countStart || 0)));
-      matchState.innerHTML = '';
+      matchState.textContent = '';
       matchState.appendChild(document.createTextNode('시작까지 '));
       const sec = document.createElement('span');
       sec.className = 'sec';
@@ -1990,11 +2153,6 @@
       readyBtn.textContent = '취소';
       readyBtn.disabled = !mine;
       startCountTimer();
-    } else if (match.state === 'playing') {
-      matchState.textContent = '대국 중';
-      readyBtn.textContent = '준비완료';
-      readyBtn.disabled = true;
-      stopCountTimer();
     } else {
       matchState.textContent = '대기 중 · ' + list.length + '/' + SEATS + ' 준비';
       readyBtn.textContent = mine ? '취소' : '준비완료';
@@ -2004,7 +2162,7 @@
     }
 
     matchPlayers.textContent = list.length
-      ? '준비: ' + list.map(id => nickMap[id] || '손님').join(', ')
+      ? '준비: ' + list.map(id => seatName(id)).join(', ')
       : '';
   }
 
@@ -2023,6 +2181,14 @@
   }
 
   readyBtn.addEventListener('click', toggleReady);
+  pickBlackBtn.addEventListener('click', () => pickColor(1));
+  pickWhiteBtn.addEventListener('click', () => pickColor(2));
+  matchOkBtn.addEventListener('click', () => {
+    resetMatch();
+
+    resetGame(true);
+    saveSession();
+  });
 
   function openNickModal() {
     loadNick();
@@ -2142,13 +2308,13 @@
     return true;
   }
 
-  document.getElementById('saveBoardBtn').addEventListener('click', saveCurrentBoard);
+  saveBoardBtn.addEventListener('click', saveCurrentBoard);
   loadBoardBtn.addEventListener('click', loadSelectedBoard);
   deleteBoardBtn.addEventListener('click', deleteSelectedBoard);
 
-  document.getElementById('resetBtn').addEventListener('click', () => { resetGame(true); saveSession(); });
-  document.getElementById('reshuffleBtn').addEventListener('click', () => { resetGame(false); saveSession(); });
-  document.getElementById('undoBtn').addEventListener('click', undoMove);
+  resetBtn.addEventListener('click', () => { resetGame(true); saveSession(); });
+  reshuffleBtn.addEventListener('click', () => { resetGame(false); saveSession(); });
+  undoBtn.addEventListener('click', undoMove);
   document.getElementById('zoomInBtn').addEventListener('click', () => {
     zoom = Math.min(4, Math.round((zoom + 0.5) * 100) / 100);
     applyZoom();
