@@ -441,6 +441,37 @@
     color: var(--accent);
   }
 
+  .match {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    background: #f1eee4;
+  }
+  .match-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .match-state {
+    flex: 1;
+    min-width: 0;
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  .match-state .sec {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+  }
+  .match-head button { font-size: 12px; padding: 5px 9px; }
+  .match-players {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    min-height: 15px;
+  }
+
   .admin {
     margin-top: 14px;
     padding: 10px 12px;
@@ -574,6 +605,14 @@
       <button id="roomCopyBtn">링크 복사</button>
     </div>
 
+    <div class="match" id="matchPanel" hidden>
+      <div class="match-head">
+        <span class="match-state" id="matchState">대기 중</span>
+        <button id="readyBtn">준비완료</button>
+      </div>
+      <div class="match-players" id="matchPlayers"></div>
+    </div>
+
     <div class="room-msg" id="roomMsg"></div>
   </div>
 
@@ -667,6 +706,10 @@
   const roomInviteLink = document.getElementById('roomInviteLink');
   const roomCopyBtn = document.getElementById('roomCopyBtn');
   const roomMsg = document.getElementById('roomMsg');
+  const matchPanel = document.getElementById('matchPanel');
+  const matchState = document.getElementById('matchState');
+  const matchPlayers = document.getElementById('matchPlayers');
+  const readyBtn = document.getElementById('readyBtn');
   const boardScroll = document.getElementById('boardScroll');
   const zoomVal = document.getElementById('zoomVal');
 
@@ -1215,6 +1258,9 @@
   const CODE_LEN = 4;
 
   const ROOM_GRACE_MS = 15000;
+  const MATCH_PATH = 'match';
+  const COUNTDOWN_MS = 5000;
+  const SEATS = 2;
 
   let online = false;
   let gameRef = null, gameHandler = null;
@@ -1224,6 +1270,11 @@
   let roomListRef = null, roomListHandler = null;
   let currentRoom = null;
   let rooms = {};
+  let matchRef = null, matchHandler = null;
+  let match = null;
+  let countTimer = null;
+  let timeOffsetRef = null, timeOffsetHandler = null;
+  let timeOffset = 0;
   let nickMap = {};
   let applyingRemote = false;
   let lastSig = null;
@@ -1446,6 +1497,7 @@
       }
       nickMap = next;
       refreshChatNames();
+      renderMatch();
 
       if (currentRoom) {
         const count = Object.keys(raw).length;
@@ -1483,6 +1535,22 @@
       }
     });
 
+    if (currentRoom) {
+      matchRef = db.ref(placePath(MATCH_PATH));
+      matchHandler = matchRef.on('value', snap => {
+        const raw = snap.val() || {};
+        match = {
+          state: typeof raw.state === 'string' ? raw.state : 'idle',
+          ready: raw.ready || {},
+          countStart: typeof raw.countStart === 'number' ? raw.countStart : 0
+        };
+        renderMatch();
+      }, () => { roomMsg.textContent = '대국 상태를 받지 못함'; });
+    } else {
+      match = null;
+      renderMatch();
+    }
+
     updateRoomUI();
   }
 
@@ -1492,6 +1560,17 @@
       meRef.onDisconnect().cancel();
       meRef.remove().catch(() => {  });
     }
+
+    if (matchRef && isReady()) {
+      const me = getMyId();
+      matchRef.child('ready/' + me).remove().catch(() => {  });
+      matchRef.update({ state: 'idle', countStart: null }).catch(() => {  });
+    }
+    if (matchRef && matchHandler) matchRef.off('value', matchHandler);
+    matchRef = matchHandler = null;
+    match = null;
+    stopCountTimer();
+
     if (gameRef && gameHandler) gameRef.off('value', gameHandler);
     if (usersRef && usersHandler) usersRef.off('value', usersHandler);
     if (chatQuery && chatHandler) chatQuery.off('child_added', chatHandler);
@@ -1521,6 +1600,11 @@
     online = true;
     setOnlineStatus('연결 중…');
     roomPanel.hidden = false;
+
+    timeOffsetRef = db.ref('.info/serverTimeOffset');
+    timeOffsetHandler = timeOffsetRef.on('value', snap => {
+      timeOffset = typeof snap.val() === 'number' ? snap.val() : 0;
+    });
 
     connRef = db.ref('.info/connected');
     connHandler = connRef.on('value', snap => {
@@ -1556,6 +1640,8 @@
     detachPlace();
     if (connRef && connHandler) connRef.off('value', connHandler);
     if (roomListRef && roomListHandler) roomListRef.off('value', roomListHandler);
+    if (timeOffsetRef && timeOffsetHandler) timeOffsetRef.off('value', timeOffsetHandler);
+    timeOffsetRef = timeOffsetHandler = null;
     connRef = connHandler = null;
     roomListRef = roomListHandler = null;
     online = false;
@@ -1717,6 +1803,107 @@
       roomMsg.textContent = '직접 복사해주세요';
     }
   });
+
+  function serverNow() {
+    return Date.now() + timeOffset;
+  }
+
+  function readyList() {
+    return match && match.ready ? Object.keys(match.ready) : [];
+  }
+
+  function isReady() {
+    return readyList().indexOf(getMyId()) !== -1;
+  }
+
+  function toggleReady() {
+    if (!matchRef) return;
+    const me = getMyId();
+
+    matchRef.child('ready').transaction(cur => {
+      cur = cur || {};
+      if (cur[me]) {
+        delete cur[me];
+        return cur;
+      }
+      if (Object.keys(cur).length >= SEATS) return;
+      cur[me] = true;
+      return cur;
+    }, (err, committed, snap) => {
+      if (err || !committed) return;
+      const now = snap.val() || {};
+      const n = Object.keys(now).length;
+      if (n >= SEATS) {
+
+        matchRef.update({ state: 'counting', countStart: serverNow() });
+      } else {
+
+        matchRef.update({ state: 'idle', countStart: null });
+      }
+    });
+  }
+
+  function checkCountdown() {
+    if (!matchRef || !match || match.state !== 'counting') return;
+    const left = COUNTDOWN_MS - (serverNow() - (match.countStart || 0));
+    if (left <= 0) matchRef.update({ state: 'playing', countStart: null });
+  }
+
+  function renderMatch() {
+    const inRoom = !!currentRoom;
+    matchPanel.hidden = !inRoom;
+    if (!inRoom || !match) {
+      stopCountTimer();
+      return;
+    }
+
+    const list = readyList();
+    const mine = isReady();
+
+    if (match.state === 'counting') {
+      const left = Math.max(0, COUNTDOWN_MS - (serverNow() - (match.countStart || 0)));
+      matchState.innerHTML = '';
+      matchState.appendChild(document.createTextNode('시작까지 '));
+      const sec = document.createElement('span');
+      sec.className = 'sec';
+      sec.textContent = Math.ceil(left / 1000) + '초';
+      matchState.appendChild(sec);
+      readyBtn.textContent = '취소';
+      readyBtn.disabled = !mine;
+      startCountTimer();
+    } else if (match.state === 'playing') {
+      matchState.textContent = '대국 중';
+      readyBtn.textContent = '준비완료';
+      readyBtn.disabled = true;
+      stopCountTimer();
+    } else {
+      matchState.textContent = '대기 중 · ' + list.length + '/' + SEATS + ' 준비';
+      readyBtn.textContent = mine ? '취소' : '준비완료';
+
+      readyBtn.disabled = !mine && list.length >= SEATS;
+      stopCountTimer();
+    }
+
+    matchPlayers.textContent = list.length
+      ? '준비: ' + list.map(id => nickMap[id] || '손님').join(', ')
+      : '';
+  }
+
+  function startCountTimer() {
+    if (countTimer) return;
+    countTimer = setInterval(() => {
+      renderMatch();
+      checkCountdown();
+    }, 200);
+  }
+
+  function stopCountTimer() {
+    if (!countTimer) return;
+    clearInterval(countTimer);
+    countTimer = null;
+  }
+
+  readyBtn.addEventListener('click', toggleReady);
 
   function openNickModal() {
     loadNick();
