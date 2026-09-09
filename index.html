@@ -300,9 +300,17 @@
   }
   .chat-input-row input[type=text]:disabled { background: #f0ede5; color: #9a958a; }
   button.danger { color: var(--accent); }
+
   button:disabled {
-    opacity: 0.45;
+    background: #ebe7dc;
+    border-color: #d5cfbe;
+    color: #a49e91;
     cursor: default;
+  }
+  button.primary:disabled {
+    background: #b9bdd0;
+    border-color: #b9bdd0;
+    color: #f2f1ec;
   }
 
   [hidden] { display: none !important; }
@@ -1262,6 +1270,9 @@
   const COUNTDOWN_MS = 5000;
   const SEATS = 2;
 
+  const SESSION_ONLINE_KEY = 'wave-omok:session-online';
+  const SESSION_ROOM_KEY = 'wave-omok:session-room';
+
   let online = false;
   let gameRef = null, gameHandler = null;
   let connRef = null, connHandler = null;
@@ -1270,6 +1281,9 @@
   let roomListRef = null, roomListHandler = null;
   let currentRoom = null;
   let rooms = {};
+
+  let roomWatchers = {};
+  let roomCounts = {};
   let matchRef = null, matchHandler = null;
   let match = null;
   let countTimer = null;
@@ -1499,11 +1513,7 @@
       refreshChatNames();
       renderMatch();
 
-      if (currentRoom) {
-        const count = Object.keys(raw).length;
-        db.ref(ROOM_LIST_PATH + '/' + currentRoom + '/count').set(count)
-          .catch(() => {  });
-      }
+      updateRoomUI();
 
       const myName = nickMap[getMyId()];
       if (myName && myName !== nickInput.value) {
@@ -1620,19 +1630,22 @@
         const r = raw[code] || {};
         rooms[code] = {
           title: (typeof r.title === 'string' && r.title.trim()) ? r.title.slice(0, 20) : '이름 없는 방',
-          count: typeof r.count === 'number' ? r.count : 0,
           created: typeof r.created === 'number' ? r.created : 0
         };
       }
+      syncRoomWatchers();
       renderRoomList();
       updateRoomUI();
-      cleanupEmptyRooms();
     }, () => { roomMsg.textContent = '방 목록을 받지 못함'; });
 
     currentRoom = null;
+    rememberSession();
     attachPlace();
+    syncRoomWatchers();
 
-    const wanted = new URLSearchParams(location.search).get('room');
+    let saved = null;
+    try { saved = sessionStorage.getItem(SESSION_ROOM_KEY); } catch (e) {  }
+    const wanted = new URLSearchParams(location.search).get('room') || saved;
     if (wanted) enterRoom(wanted);
   }
 
@@ -1646,28 +1659,55 @@
     roomListRef = roomListHandler = null;
     online = false;
     currentRoom = null;
+    clearRoomWatchers();
     rooms = {};
     roomPanel.hidden = true;
     setOnlineStatus('꺼짐');
     setChatEnabled(false);
+    rememberSession();
   }
 
-  function cleanupEmptyRooms() {
+  function syncRoomWatchers() {
+    const db = ensureDb();
+    if (!db || !online || currentRoom) { clearRoomWatchers(); return; }
+
+    for (const code of Object.keys(roomWatchers)) {
+      if (rooms[code]) continue;
+      roomWatchers[code].ref.off('value', roomWatchers[code].handler);
+      delete roomWatchers[code];
+      delete roomCounts[code];
+    }
+
+    for (const code of Object.keys(rooms)) {
+      if (roomWatchers[code]) continue;
+      const ref = db.ref(ROOMS_PATH + '/' + code + '/' + USERS_PATH);
+      const handler = ref.on('value', snap => {
+        roomCounts[code] = snap.exists() ? Object.keys(snap.val()).length : 0;
+        renderRoomList();
+        removeIfEmpty(code);
+      }, () => {  });
+      roomWatchers[code] = { ref: ref, handler: handler };
+    }
+  }
+
+  function clearRoomWatchers() {
+    for (const code of Object.keys(roomWatchers)) {
+      roomWatchers[code].ref.off('value', roomWatchers[code].handler);
+    }
+    roomWatchers = {};
+    roomCounts = {};
+  }
+
+  function removeIfEmpty(code) {
     if (!online || currentRoom) return;
+    if (roomCounts[code] !== 0) return;
+    const info = rooms[code];
+
+    if (!info || Date.now() - info.created < ROOM_GRACE_MS) return;
     const db = ensureDb();
     if (!db) return;
-    const now = Date.now();
-    for (const code of Object.keys(rooms)) {
-
-      if (now - rooms[code].created < ROOM_GRACE_MS) continue;
-      db.ref(ROOMS_PATH + '/' + code + '/' + USERS_PATH).once('value')
-        .then(snap => {
-          if (snap.exists()) return;
-          db.ref(ROOM_LIST_PATH + '/' + code).remove();
-          db.ref(ROOMS_PATH + '/' + code).remove();
-        })
-        .catch(() => {  });
-    }
+    db.ref(ROOM_LIST_PATH + '/' + code).remove().catch(() => {  });
+    db.ref(ROOMS_PATH + '/' + code).remove().catch(() => {  });
   }
 
   function makeRoomCode() {
@@ -1690,7 +1730,8 @@
     if (inRoom) {
       const info = rooms[currentRoom];
       const title = info ? info.title : '이름 없는 방';
-      const count = info ? info.count : 0;
+
+      const count = Object.keys(nickMap).length;
       roomWhere.textContent = title + ' (' + currentRoom + ') · ' + count + '명';
       roomInviteLink.value = inviteLink();
     } else {
@@ -1719,7 +1760,7 @@
 
       const countEl = document.createElement('span');
       countEl.className = 'count';
-      countEl.textContent = rooms[code].count + '명';
+      countEl.textContent = (roomCounts[code] || 0) + '명';
 
       const codeEl = document.createElement('span');
       codeEl.className = 'code';
@@ -1737,9 +1778,10 @@
     detachPlace();
     currentRoom = code;
     roomMsg.textContent = '';
+    rememberSession();
     attachPlace();
+    syncRoomWatchers();
     renderRoomList();
-    cleanupEmptyRooms();
   }
 
   function enterRoom(code) {
@@ -1803,6 +1845,19 @@
       roomMsg.textContent = '직접 복사해주세요';
     }
   });
+
+  function rememberSession() {
+    try {
+      if (online) {
+        sessionStorage.setItem(SESSION_ONLINE_KEY, '1');
+        if (currentRoom) sessionStorage.setItem(SESSION_ROOM_KEY, currentRoom);
+        else sessionStorage.removeItem(SESSION_ROOM_KEY);
+      } else {
+        sessionStorage.removeItem(SESSION_ONLINE_KEY);
+        sessionStorage.removeItem(SESSION_ROOM_KEY);
+      }
+    } catch (e) {  }
+  }
 
   function serverNow() {
     return Date.now() + timeOffset;
@@ -2066,10 +2121,21 @@
 
   if (!restoreSession()) resetGame(false);
 
-  if (new URLSearchParams(location.search).get('room')) {
+  (function restoreOnline() {
+    const invited = new URLSearchParams(location.search).get('room');
+    let wasOnline = false;
+    try { wasOnline = sessionStorage.getItem(SESSION_ONLINE_KEY) === '1'; } catch (e) {  }
+
+    if (!invited && !wasOnline) return;
+
     onlineCheck.checked = true;
-    openNickModal();
-  }
+    if (wasOnline) {
+
+      connectOnline();
+    } else {
+      openNickModal();
+    }
+  })();
 })();
 </script>
 </body>
