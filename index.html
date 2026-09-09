@@ -1638,14 +1638,15 @@
       updateRoomUI();
     }, () => { roomMsg.textContent = '방 목록을 받지 못함'; });
 
+    let saved = null;
+    try { saved = sessionStorage.getItem(SESSION_ROOM_KEY); } catch (e) {  }
+    const wanted = new URLSearchParams(location.search).get('room') || saved;
+
     currentRoom = null;
     rememberSession();
     attachPlace();
     syncRoomWatchers();
 
-    let saved = null;
-    try { saved = sessionStorage.getItem(SESSION_ROOM_KEY); } catch (e) {  }
-    const wanted = new URLSearchParams(location.search).get('room') || saved;
     if (wanted) enterRoom(wanted);
   }
 
