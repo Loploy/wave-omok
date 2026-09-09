@@ -421,6 +421,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .room-item .count {
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
   .room-item .code {
     font-weight: 700;
     letter-spacing: 1px;
@@ -1210,6 +1214,8 @@
   const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   const CODE_LEN = 4;
 
+  const ROOM_GRACE_MS = 15000;
+
   let online = false;
   let gameRef = null, gameHandler = null;
   let connRef = null, connHandler = null;
@@ -1217,7 +1223,7 @@
   let usersRef = null, usersHandler = null;
   let roomListRef = null, roomListHandler = null;
   let currentRoom = null;
-  let roomTitles = {};
+  let rooms = {};
   let nickMap = {};
   let applyingRemote = false;
   let lastSig = null;
@@ -1415,7 +1421,12 @@
     gameRef = db.ref(placePath(GAME_PATH));
     gameHandler = gameRef.on('value', snap => {
       const st = normalizeState(snap.val());
-      if (!st) { pushState(); return; }
+      if (!st) {
+
+        resetGame(true);
+        saveSession();
+        return;
+      }
       const sig = sigOf(st);
       if (sig === lastSig) return;
       lastSig = sig;
@@ -1435,6 +1446,12 @@
       }
       nickMap = next;
       refreshChatNames();
+
+      if (currentRoom) {
+        const count = Object.keys(raw).length;
+        db.ref(ROOM_LIST_PATH + '/' + currentRoom + '/count').set(count)
+          .catch(() => {  });
+      }
 
       const myName = nickMap[getMyId()];
       if (myName && myName !== nickInput.value) {
@@ -1513,14 +1530,19 @@
 
     roomListRef = db.ref(ROOM_LIST_PATH);
     roomListHandler = roomListRef.on('value', snap => {
-      roomTitles = {};
+      rooms = {};
       const raw = snap.val() || {};
       for (const code of Object.keys(raw)) {
-        const t = raw[code] && raw[code].title;
-        roomTitles[code] = (typeof t === 'string' && t.trim()) ? t.slice(0, 20) : '이름 없는 방';
+        const r = raw[code] || {};
+        rooms[code] = {
+          title: (typeof r.title === 'string' && r.title.trim()) ? r.title.slice(0, 20) : '이름 없는 방',
+          count: typeof r.count === 'number' ? r.count : 0,
+          created: typeof r.created === 'number' ? r.created : 0
+        };
       }
       renderRoomList();
       updateRoomUI();
+      cleanupEmptyRooms();
     }, () => { roomMsg.textContent = '방 목록을 받지 못함'; });
 
     currentRoom = null;
@@ -1538,10 +1560,28 @@
     roomListRef = roomListHandler = null;
     online = false;
     currentRoom = null;
-    roomTitles = {};
+    rooms = {};
     roomPanel.hidden = true;
     setOnlineStatus('꺼짐');
     setChatEnabled(false);
+  }
+
+  function cleanupEmptyRooms() {
+    if (!online || currentRoom) return;
+    const db = ensureDb();
+    if (!db) return;
+    const now = Date.now();
+    for (const code of Object.keys(rooms)) {
+
+      if (now - rooms[code].created < ROOM_GRACE_MS) continue;
+      db.ref(ROOMS_PATH + '/' + code + '/' + USERS_PATH).once('value')
+        .then(snap => {
+          if (snap.exists()) return;
+          db.ref(ROOM_LIST_PATH + '/' + code).remove();
+          db.ref(ROOMS_PATH + '/' + code).remove();
+        })
+        .catch(() => {  });
+    }
   }
 
   function makeRoomCode() {
@@ -1562,8 +1602,10 @@
     roomInvite.hidden = !inRoom;
     roomLeaveBtn.hidden = !inRoom;
     if (inRoom) {
-      const title = roomTitles[currentRoom] || '이름 없는 방';
-      roomWhere.textContent = title + ' (' + currentRoom + ')';
+      const info = rooms[currentRoom];
+      const title = info ? info.title : '이름 없는 방';
+      const count = info ? info.count : 0;
+      roomWhere.textContent = title + ' (' + currentRoom + ') · ' + count + '명';
       roomInviteLink.value = inviteLink();
     } else {
       roomWhere.textContent = '로비';
@@ -1572,7 +1614,7 @@
 
   function renderRoomList() {
     roomListEl.textContent = '';
-    const codes = Object.keys(roomTitles).filter(c => c !== currentRoom);
+    const codes = Object.keys(rooms).filter(c => c !== currentRoom);
     if (codes.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'room-empty';
@@ -1587,13 +1629,18 @@
 
       const name = document.createElement('span');
       name.className = 'name';
-      name.textContent = roomTitles[code];
+      name.textContent = rooms[code].title;
+
+      const countEl = document.createElement('span');
+      countEl.className = 'count';
+      countEl.textContent = rooms[code].count + '명';
 
       const codeEl = document.createElement('span');
       codeEl.className = 'code';
       codeEl.textContent = code;
 
       btn.appendChild(name);
+      btn.appendChild(countEl);
       btn.appendChild(codeEl);
       roomListEl.appendChild(btn);
     }
@@ -1606,6 +1653,7 @@
     roomMsg.textContent = '';
     attachPlace();
     renderRoomList();
+    cleanupEmptyRooms();
   }
 
   function enterRoom(code) {
@@ -1831,6 +1879,10 @@
 
   if (!restoreSession()) resetGame(false);
 
+  if (new URLSearchParams(location.search).get('room')) {
+    onlineCheck.checked = true;
+    openNickModal();
+  }
 })();
 </script>
 </body>
