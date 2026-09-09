@@ -1311,6 +1311,8 @@
   const MATCH_PATH = 'match';
   const COUNTDOWN_MS = 5000;
   const CHOOSE_MS = 10000;
+
+  const SEAT_GRACE_MS = 12000;
   const SEATS = 2;
 
   const SESSION_ONLINE_KEY = 'wave-omok:session-online';
@@ -1330,6 +1332,7 @@
   let matchRef = null, matchHandler = null;
   let match = null;
   let countTimer = null;
+  let seatLeftTimer = null;
   let timeOffsetRef = null, timeOffsetHandler = null;
   let timeOffset = 0;
   let nickMap = {};
@@ -1631,6 +1634,7 @@
     matchRef = matchHandler = null;
     match = null;
     stopCountTimer();
+    clearSeatTimer();
     renderMatch();
 
     if (gameRef && gameHandler) gameRef.off('value', gameHandler);
@@ -2026,6 +2030,8 @@
       return;
     }
 
+    if (gameRef) gameRef.child('moves').remove().catch(() => {  });
+
     matchRef.update({
       state: 'playing',
       chooseStart: null,
@@ -2061,11 +2067,27 @@
   }
 
   function checkSeatLeft() {
-    if (!inPlay()) return;
-    const here = nickMap;
-    if (here[match.black] && here[match.white]) return;
-    const gone = here[match.black] ? seatName(match.white) : seatName(match.black);
-    endMatch((gone || '대국자') + ' 님이 나감');
+    if (!inPlay() || (nickMap[match.black] && nickMap[match.white])) {
+      clearSeatTimer();
+      return;
+    }
+    if (seatLeftTimer) return;
+
+    seatLeftTimer = setTimeout(() => {
+      seatLeftTimer = null;
+      if (!inPlay()) return;
+      if (nickMap[match.black] && nickMap[match.white]) return;
+      const gone = nickMap[match.black] ? seatName(match.white) : seatName(match.black);
+      endMatch((gone || '대국자') + ' 님이 나감');
+    }, SEAT_GRACE_MS);
+
+    renderMatch();
+  }
+
+  function clearSeatTimer() {
+    if (!seatLeftTimer) return;
+    clearTimeout(seatLeftTimer);
+    seatLeftTimer = null;
   }
 
   function inPlay() {
@@ -2129,7 +2151,7 @@
     }
 
     if (state === 'playing') {
-      matchState.textContent = '대국 중';
+      matchState.textContent = seatLeftTimer ? '상대 접속 끊김 — 기다리는 중' : '대국 중';
       matchPlayers.textContent = '흑 ' + seatName(match.black) + ' · 백 ' + seatName(match.white);
       stopCountTimer();
       return;
